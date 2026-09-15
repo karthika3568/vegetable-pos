@@ -57,6 +57,7 @@ export default {
     profit: 'Revenue',
     insights: 'Insights',
     reports: 'Reports',
+    analytics: 'Product Analytics',
     system: 'System',
     settings: 'Settings',
     users: 'Users',

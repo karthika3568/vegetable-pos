@@ -590,14 +590,11 @@ export default function POSPage() {
 
   const [saleType, setSaleType] = useState('retail');
 
-  const scanRef = useRef(null);
   const searchRef = useRef(null);
   const customerRef = useRef(null);
   const discountRef = useRef(null);
   const completeRef = useRef(null);
 
-  const [scanInput, setScanInput] = useState('');
-  const [scanMessage, setScanMessage] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -735,32 +732,29 @@ export default function POSPage() {
   const creditRowMismatch = paymentMode === PAYMENT_MODES.split && creditRows.length > 0 &&
     creditRowAmount !== newCreditAmount;
 
-  function handleScan(event) {
+  function handleSearchSubmit(event) {
     event.preventDefault();
-    const value = scanInput.trim();
+    const value = searchInput.trim();
     if (!value) return;
 
-    const byBarcode = productItems.find(
-      (product) => product.barcode && String(product.barcode) === value
+    // Exact barcode / code match adds the product straight to the cart,
+    // preserving the scanner workflow in the single search box.
+    const exactMatch = productItems.find(
+      (product) =>
+        (product.barcode && String(product.barcode) === value) ||
+        (product.productCode && String(product.productCode) === value)
     );
-    if (byBarcode) {
-      setScanMessage('');
-      handleAddToCart(byBarcode);
-      setScanInput('');
+    if (exactMatch) {
+      handleAddToCart(exactMatch);
+      setSearchInput('');
+      setSearch('');
+      setPage(1);
+      setHighlightId(null);
+      searchRef.current?.focus();
       return;
     }
 
-    setScanMessage(t('pos.scanNotFound', { code: value }));
     setSearch(value);
-    setSearchInput(value);
-    setPage(1);
-    setScanInput('');
-    searchRef.current?.focus();
-  }
-
-  function handleSearchSubmit(event) {
-    event.preventDefault();
-    setSearch(searchInput.trim());
     setPage(1);
     setHighlightId(null);
   }
@@ -770,8 +764,7 @@ export default function POSPage() {
     setSearch('');
     setPage(1);
     setHighlightId(null);
-    setScanMessage('');
-    scanRef.current?.focus();
+    searchRef.current?.focus();
   }
 
   const addLine = useCallback((product, quantity = 1) => {
@@ -807,11 +800,10 @@ export default function POSPage() {
   function handleAddToCart(product, quantity = 1) {
     if (Number(product.currentStock) <= 0) return;
     if (!Number.isFinite(Number(quantity)) || Number(quantity) <= 0) return;
-    setScanMessage('');
     addLine(product, Number(quantity));
     showToast(`${product.name} added to cart.`, 'success');
     playPosSound('product', soundEnabled && settings.sound_product !== 'off');
-    scanRef.current?.focus();
+    searchRef.current?.focus();
   }
 
   function handleQuantityChange(productId, rawValue) {
@@ -998,7 +990,7 @@ export default function POSPage() {
     setPaymentTouched(false);
     setSubmitError('');
     setSubmitting(false);
-    scanRef.current?.focus();
+    searchRef.current?.focus();
   }
 
   // Keyboard shortcuts - the POS is used keyboard-first.
@@ -1013,7 +1005,7 @@ export default function POSPage() {
 
       if (event.key === 'F2') {
         event.preventDefault();
-        scanRef.current?.focus();
+        searchRef.current?.focus();
         return;
       }
       if (event.key === 'F3') {
@@ -1100,19 +1092,24 @@ export default function POSPage() {
           </div>
 
           <div className="pos-scan-row">
-            <form className="pos-search pos-scan" onSubmit={handleScan} role="search">
+            <form className="pos-search" onSubmit={handleSearchSubmit} role="search">
               <input
-                ref={scanRef}
+                ref={searchRef}
                 type="search"
-                value={scanInput}
-                onChange={(event) => {
-                  setScanInput(event.target.value);
-                  if (scanMessage) setScanMessage('');
-                }}
-                placeholder={t('pos.scanPlaceholder')}
-                aria-label={t('pos.scan')}
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+                placeholder={t('pos.searchProducts')}
+                aria-label={t('pos.searchProducts')}
                 autoComplete="off"
               />
+              <button type="submit" className="btn btn-outline">
+                {t('pos.search')}
+              </button>
+              {search ? (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={handleClearSearch}>
+                  ✕
+                </button>
+              ) : null}
             </form>
             <div
               className={`sale-type-toggle ${saleType === 'retail' ? 'retail-active' : 'wholesale-active'}`}
@@ -1136,31 +1133,6 @@ export default function POSPage() {
             </div>
           </div>
 
-          {scanMessage ? (
-            <p className="pos-scan-feedback" role="status">
-              {scanMessage}
-            </p>
-          ) : null}
-
-          <form className="pos-search" onSubmit={handleSearchSubmit} role="search">
-            <input
-              ref={searchRef}
-              type="search"
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-              placeholder={t('pos.searchProducts')}
-              aria-label={t('pos.searchProducts')}
-            />
-            <button type="submit" className="btn btn-outline">
-              {t('pos.search')}
-            </button>
-            {search ? (
-              <button type="button" className="btn btn-ghost btn-sm" onClick={handleClearSearch}>
-                ✕
-              </button>
-            ) : null}
-          </form>
-
           <div className="pos-products-scroll">
             {products.error && !products.data ? (
               <ErrorState
@@ -1181,11 +1153,7 @@ export default function POSPage() {
             {products.data && pagedProducts.length === 0 ? (
               <EmptyState
                 title={search ? t('pos.searchProducts') : t('pos.products')}
-                description={
-                  search
-                    ? t('pos.searchProducts')
-                    : t('pos.noItemsInCart')
-                }
+                description={search ? t('common.noResults') : t('pos.noItemsInCart')}
               />
             ) : null}
 

@@ -57,6 +57,7 @@ export default {
     profit: 'வருவாய்',
     insights: 'நுண்ணறிவுகள்',
     reports: 'அறிக்கைகள்',
+    analytics: 'பொருள் பகுப்பாய்வு',
     system: 'அமைப்பு',
     settings: 'அமைப்புகள்',
     taxCodes: 'வரி குறியீடுகள்',

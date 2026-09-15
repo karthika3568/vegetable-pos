@@ -310,7 +310,8 @@ async function stockReport({ fromDate, toDateExclusive, categoryId, search, orde
          COALESCE(act.return_purchase_qty, 0) AS return_purchase_qty,
          COALESCE(act.return_sale_qty, 0) AS return_sale_qty,
          COALESCE(act.adjustment_qty, 0) AS adjustment_qty,
-         COALESCE(act.cancellation_reversal_qty, 0) AS cancellation_reversal_qty
+         COALESCE(act.cancellation_reversal_qty, 0) AS cancellation_reversal_qty,
+         COALESCE(act.damage_qty, 0) AS damage_qty
        FROM products p
        LEFT JOIN categories c ON c.id = p.category_id
        LEFT JOIN stock st ON st.product_id = p.id
@@ -321,7 +322,8 @@ async function stockReport({ fromDate, toDateExclusive, categoryId, search, orde
            COALESCE(SUM(CASE WHEN transaction_type = 'return_purchase' THEN quantity_change ELSE 0 END), 0) AS return_purchase_qty,
            COALESCE(SUM(CASE WHEN transaction_type = 'return_sale' THEN quantity_change ELSE 0 END), 0) AS return_sale_qty,
            COALESCE(SUM(CASE WHEN transaction_type = 'adjustment' THEN quantity_change ELSE 0 END), 0) AS adjustment_qty,
-           COALESCE(SUM(CASE WHEN transaction_type = 'cancellation_reversal' THEN quantity_change ELSE 0 END), 0) AS cancellation_reversal_qty
+           COALESCE(SUM(CASE WHEN transaction_type = 'cancellation_reversal' THEN quantity_change ELSE 0 END), 0) AS cancellation_reversal_qty,
+           COALESCE(SUM(CASE WHEN transaction_type = 'damage' THEN quantity_change ELSE 0 END), 0) AS damage_qty
          FROM stock_transactions
          WHERE created_at >= ? AND created_at < ?
          GROUP BY product_id

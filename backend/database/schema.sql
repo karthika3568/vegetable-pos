@@ -32,9 +32,12 @@ DROP TABLE IF EXISTS sale_returns;
 DROP TABLE IF EXISTS sale_items;
 DROP TABLE IF EXISTS sales;
 DROP TABLE IF EXISTS stock_transactions;
+DROP TABLE IF EXISTS product_price_history;
 DROP TABLE IF EXISTS stock;
+DROP TABLE IF EXISTS purchase_order_items;
 DROP TABLE IF EXISTS purchase_items;
 DROP TABLE IF EXISTS purchases;
+DROP TABLE IF EXISTS purchase_orders;
 DROP TABLE IF EXISTS income;
 DROP TABLE IF EXISTS expenses;
 DROP TABLE IF EXISTS settings;
@@ -263,13 +266,81 @@ CREATE TABLE product_variants (
 CREATE INDEX idx_product_variants_active ON product_variants(is_active);
 
 -- =====================================================================
+-- 8B. PURCHASE ORDERS
+-- Two-stage procurement: a PO records intent to buy from a supplier and
+-- has NO stock effect by itself. Stock moves only when goods are
+-- received against the PO (each receive becomes a row in `purchases` /
+-- `purchase_items`, linked here via purchases.purchase_order_id).
+-- Status workflow: draft -> sent -> partially_received -> received;
+-- draft/sent/partially_received may be cancelled (cancelling a PO never
+-- reverses stock - receipts are already-realized purchases).
+-- =====================================================================
+CREATE TABLE purchase_orders (
+    id                      INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    po_number               VARCHAR(50)  NOT NULL,
+    supplier_id             INT UNSIGNED NOT NULL,
+    order_date              DATE NOT NULL,
+    expected_delivery_date  DATE NULL,
+    notes                   VARCHAR(255) NULL,
+    status                  ENUM('draft','sent','partially_received','received','cancelled') NOT NULL DEFAULT 'draft',
+    created_by              INT UNSIGNED NOT NULL,
+    created_at              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT uq_purchase_orders_po_number UNIQUE (po_number),
+    CONSTRAINT fk_purchase_orders_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT fk_purchase_orders_created_by FOREIGN KEY (created_by) REFERENCES users(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_purchase_orders_supplier ON purchase_orders(supplier_id);
+CREATE INDEX idx_purchase_orders_date ON purchase_orders(order_date);
+CREATE INDEX idx_purchase_orders_status ON purchase_orders(status);
+
+-- =====================================================================
+-- 8C. PURCHASE ORDER ITEMS
+-- Lines of a PO. ordered_quantity is the intent; received_quantity is
+-- good stock that becomes a purchase_items row; damaged_quantity is
+-- recorded but never stocked. received + damaged can never exceed
+-- ordered (CHECK enforced by the DB, guarded again by the PO module).
+-- =====================================================================
+CREATE TABLE purchase_order_items (
+    id                  INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    purchase_order_id   INT UNSIGNED NOT NULL,
+    product_id          INT UNSIGNED NOT NULL,
+    ordered_quantity    DECIMAL(10,3) NOT NULL,
+    expected_price      DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    received_quantity   DECIMAL(10,3) NOT NULL DEFAULT 0.000,
+    damaged_quantity    DECIMAL(10,3) NOT NULL DEFAULT 0.000,
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT uq_purchase_order_items_line UNIQUE (purchase_order_id, product_id),
+    CONSTRAINT fk_purchase_order_items_order FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id)
+        ON UPDATE CASCADE ON DELETE CASCADE,
+    CONSTRAINT fk_purchase_order_items_product FOREIGN KEY (product_id) REFERENCES products(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT chk_purchase_order_items_ordered CHECK (ordered_quantity > 0),
+    CONSTRAINT chk_purchase_order_items_price CHECK (expected_price >= 0),
+    CONSTRAINT chk_purchase_order_items_received CHECK (received_quantity >= 0),
+    CONSTRAINT chk_purchase_order_items_damaged CHECK (damaged_quantity >= 0),
+    CONSTRAINT chk_purchase_order_items_received_le_ordered CHECK (received_quantity + damaged_quantity <= ordered_quantity)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_purchase_order_items_order ON purchase_order_items(purchase_order_id);
+CREATE INDEX idx_purchase_order_items_product ON purchase_order_items(product_id);
+
+-- =====================================================================
 -- 9. PURCHASES
 -- Header record for a supplier purchase (goods received). Never
--- deleted, only cancelled via `status`, to preserve history.
+-- deleted, only cancelled via `status`, to preserve history. When the
+-- purchase came from goods receiving against a Purchase Order,
+-- purchase_order_id links it back to the PO (NULL for direct
+-- purchases without a PO).
 -- =====================================================================
 CREATE TABLE purchases (
     id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     supplier_id     INT UNSIGNED NOT NULL,
+    purchase_order_id INT UNSIGNED NULL,
     invoice_number  VARCHAR(50)  NOT NULL,
     purchase_date   DATE NOT NULL,
     total_amount    DECIMAL(12,2) NOT NULL DEFAULT 0.00,
@@ -284,12 +355,15 @@ CREATE TABLE purchases (
     CONSTRAINT uq_purchases_supplier_invoice UNIQUE (supplier_id, invoice_number),
     CONSTRAINT fk_purchases_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
         ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT fk_purchases_purchase_order FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT fk_purchases_created_by FOREIGN KEY (created_by) REFERENCES users(id)
         ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT chk_purchases_amounts CHECK (total_amount >= 0 AND paid_amount >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_purchases_supplier ON purchases(supplier_id);
+CREATE INDEX idx_purchases_purchase_order ON purchases(purchase_order_id);
 CREATE INDEX idx_purchases_date ON purchases(purchase_date);
 CREATE INDEX idx_purchases_status ON purchases(status);
 
@@ -345,7 +419,7 @@ CREATE TABLE stock (
 CREATE TABLE stock_transactions (
     id                  BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     product_id          INT UNSIGNED NOT NULL,
-    transaction_type    ENUM('purchase','sale','return_purchase','return_sale','adjustment','cancellation_reversal') NOT NULL,
+    transaction_type    ENUM('purchase','sale','return_purchase','return_sale','adjustment','cancellation_reversal','damage') NOT NULL,
     quantity_change     DECIMAL(10,3) NOT NULL, -- signed: positive = stock in, negative = stock out
     quantity_before     DECIMAL(10,3) NOT NULL,
     quantity_after      DECIMAL(10,3) NOT NULL,
@@ -364,6 +438,29 @@ CREATE TABLE stock_transactions (
 CREATE INDEX idx_stock_tx_product ON stock_transactions(product_id);
 CREATE INDEX idx_stock_tx_reference ON stock_transactions(reference_table, reference_id);
 CREATE INDEX idx_stock_tx_created_at ON stock_transactions(created_at);
+
+-- =====================================================================
+-- 12B. PRODUCT PRICE HISTORY
+-- Append-only ledger of product pricing (selling/cost) with the moment
+-- each value became effective. Lets analytics answer "what price applied
+-- on date X?" without reconstructing old prices from today's value.
+-- Written by the product module on create and on any price change.
+-- =====================================================================
+CREATE TABLE product_price_history (
+    id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    product_id      INT UNSIGNED NOT NULL,
+    selling_price   DECIMAL(10,2) NOT NULL,
+    cost_price      DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    effective_from  DATETIME      NOT NULL,
+    created_by      INT UNSIGNED NULL,
+    created_at      TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_product_price_history_product FOREIGN KEY (product_id)
+        REFERENCES products(id) ON UPDATE CASCADE ON DELETE CASCADE,
+    CONSTRAINT chk_product_price_history_selling CHECK (selling_price >= 0),
+    CONSTRAINT chk_product_price_history_cost CHECK (cost_price >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_product_price_history_product_effective ON product_price_history(product_id, effective_from);
 
 -- =====================================================================
 -- 13. SALES

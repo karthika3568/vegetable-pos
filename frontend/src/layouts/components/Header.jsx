@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { FiLogOut, FiMenu, FiSearch } from 'react-icons/fi';
+import { FiLogOut, FiMenu } from 'react-icons/fi';
 import { useLocation } from 'react-router-dom';
 import { NAVIGATION } from '../../config/navigation.js';
 import { useAuth } from '../../context/AuthContext.jsx';
@@ -55,11 +55,6 @@ export default function Header({ menuOpen, onMenuToggle, isPos = false, isMobile
           </span>
           <span className="shop-name">{t('common.appName')}</span>
         </div>
-      </div>
-
-      <div className="header-search" aria-label="Search">
-        <FiSearch size={16} />
-        <input type="text" placeholder="Search" aria-label="Search" />
       </div>
 
       <div className="header-right">

@@ -90,7 +90,7 @@ function VariantFormModal({ product, initial, onClose, onSubmit }) {
         <div className="form-field">
           <div className="pick-box">
             <div className="pick-box-main">{product?.name || 'Unknown product'}</div>
-            {product?.product_code ? <div className="pick-box-sub">{product.product_code}</div> : null}
+            {product?.productCode ? <div className="pick-box-sub">{product.productCode}</div> : null}
           </div>
         </div>
 
@@ -309,7 +309,7 @@ export default function VariantsPage() {
               {productOptions.map((option) => (
                 <option key={option.id} value={option.id}>
                   {option.name}
-                  {option.product_code ? ` (${option.product_code})` : ''}
+                  {option.productCode ? ` (${option.productCode})` : ''}
                 </option>
               ))}
             </select>

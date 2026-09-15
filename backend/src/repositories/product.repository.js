@@ -89,6 +89,13 @@ async function create({
 
     const productId = result.insertId;
 
+    // Record the initial pricing in the append-only price-history ledger.
+    await connection.query(
+      `INSERT INTO product_price_history (product_id, selling_price, cost_price, effective_from, created_by)
+       VALUES (?, ?, ?, NOW(), NULL)`,
+      [productId, sellingPrice, purchasePrice]
+    );
+
     if (Number(currentStock) > 0) {
       await connection.query(
         `INSERT INTO stock (product_id, quantity)
@@ -198,6 +205,11 @@ async function update(
   try {
     await connection.beginTransaction();
 
+    const [[current]] = await connection.query(
+      `SELECT cost_price, selling_price FROM products WHERE id = ?`,
+      [id]
+    );
+
     await connection.query(
       `UPDATE products
        SET name = ?,
@@ -225,6 +237,19 @@ async function update(
         id,
       ]
     );
+
+    // Preserve pricing history: whenever selling or cost price actually
+    // changes, append a new ledger row (never rewrite the past).
+    if (current && (
+      Number(current.selling_price) !== Number(sellingPrice) ||
+      Number(current.cost_price) !== Number(purchasePrice)
+    )) {
+      await connection.query(
+        `INSERT INTO product_price_history (product_id, selling_price, cost_price, effective_from, created_by)
+         VALUES (?, ?, ?, NOW(), NULL)`,
+        [id, sellingPrice, purchasePrice]
+      );
+    }
 
     await connection.query(
       `INSERT INTO stock (product_id, quantity)

@@ -266,6 +266,7 @@ async function stock(query) {
     returnSaleQty: toQty(r.return_sale_qty),
     adjustmentQty: toQty(r.adjustment_qty),
     cancellationReversalQty: toQty(r.cancellation_reversal_qty),
+    damageQty: toQty(r.damage_qty),
   }));
 
   return {

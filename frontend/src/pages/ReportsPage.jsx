@@ -198,6 +198,7 @@ const REPORTS = [
       { key: 'returned', label: 'Returned', num: true, render: (r) => <QtyCell value={r.returnSaleQty} /> },
       { key: 'adjusted', label: 'Adjusted', num: true, render: (r) => <QtyCell value={r.adjustmentQty} /> },
       { key: 'cancelled', label: 'Cancelled', num: true, render: (r) => <QtyCell value={r.cancellationReversalQty} /> },
+      { key: 'damaged', label: 'Damaged', num: true, render: (r) => <QtyCell value={r.damageQty} /> },
     ],
     summary: (s) => [
       { label: 'Products', value: formatCount(s.productCount) },

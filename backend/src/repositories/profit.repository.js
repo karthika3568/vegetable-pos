@@ -113,6 +113,21 @@ async function getSummary({ fromDate, toDate, toDateExclusive }) {
       [fromDate, toDate]
     );
 
+    // Damage / wastage loss in the window: damaged quantities (negative
+    // ledger changes) valued at the product's recorded purchase cost
+    // (products.cost_price - real existing cost data, never invented).
+    // Damage is a pure stock-reduction movement keyed by its actual
+    // transaction timestamp, so the window is [fromDate, toDateExclusive).
+    const [[damage]] = await conn.query(
+      `SELECT COUNT(*) AS c,
+              COALESCE(SUM(-st.quantity_change * p.cost_price), 0) AS total
+       FROM stock_transactions st
+       JOIN products p ON p.id = st.product_id
+       WHERE st.transaction_type = 'damage'
+         AND st.created_at >= ? AND st.created_at < ?`,
+      [fromDate, toDateExclusive]
+    );
+
     // Money actually received from in-window active sales (append-only
     // payments ledger). Credit collections ('credit_payment') and
     // purchase payments ('purchase_payment') are excluded by design, so
@@ -144,6 +159,7 @@ async function getSummary({ fromDate, toDate, toDateExclusive }) {
       costBasis,
       expenses,
       income,
+      damage,
       cash,
       credits,
     };

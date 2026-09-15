@@ -25,11 +25,15 @@
  *                        purchases, so WAC is the defensible method the
  *                        data supports.
  *   grossProfit        = netSalesRevenue - costOfGoodsSold.
+ *   damageLoss         = SUM(-quantity_change * products.cost_price) of
+ *                        'damage' movements in the window (spoiled /
+ *                        wasted stock valued at the product's recorded
+ *                        purchase cost - real cost data, never invented).
  *   expenses           = SUM(expenses.amount), expense_date in window.
  *                        Purchase payments are NEVER operating expenses;
  *                        a purchase only affects profit through COGS.
  *   otherIncome        = SUM(income.amount), income_date in window.
- *   netProfit          = grossProfit + otherIncome - expenses.
+ *   netProfit          = grossProfit + otherIncome - expenses - damageLoss.
  *   cashReceived       = SUM(payments.amount) for payment_type
  *                        'sale_payment' on in-window active sales.
  *                        GRoss money actually received from those sales.
@@ -140,9 +144,10 @@ async function list({ fromDate, toDate }) {
   const costOfGoodsSold = computeCostOfGoodsSold(raw);
 
   const grossProfit = toMoney(netSalesRevenue - costOfGoodsSold.amount);
+  const damageLoss = toMoney(raw.damage.total);
   const expenses = toMoney(raw.expenses.total);
   const otherIncome = toMoney(raw.income.total);
-  const netProfit = toMoney(grossProfit + otherIncome - expenses);
+  const netProfit = toMoney(grossProfit + otherIncome - expenses - damageLoss);
   const cashReceived = toMoney(raw.cash.total);
   const creditOutstanding = toMoney(raw.credits.total);
 
@@ -158,6 +163,8 @@ async function list({ fromDate, toDate }) {
     costOfGoodsSold: costOfGoodsSold.amount,
     cogsMethod: costOfGoodsSold.method,
     grossProfit,
+    damageLoss,
+    damageCount: Number(raw.damage.c),
     expenses,
     expenseCount: Number(raw.expenses.c),
     otherIncome,

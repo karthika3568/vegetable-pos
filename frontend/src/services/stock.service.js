@@ -13,7 +13,17 @@ export const TX_TYPE_LABELS = {
   return_sale: 'Sales Return',
   adjustment: 'Adjustment',
   cancellation_reversal: 'Cancellation Reversal',
+  damage: 'Damage / Wastage',
 };
+
+export const DAMAGE_REASONS = [
+  'Spoiled / Rotten',
+  'Damaged',
+  'Expired',
+  'Quality Issue',
+  'Leakage / Broken',
+  'Other',
+];
 
 export const TX_TYPE_OPTIONS = Object.entries(TX_TYPE_LABELS).map(([value, label]) => ({
   value,
@@ -59,6 +69,11 @@ export const stockService = {
 
   async adjust(productId, { delta, note }) {
     const payload = await api.patch(`/stock/${productId}/adjust`, { delta, note });
+    return payload?.data ?? null;
+  },
+
+  async recordDamage(productId, { quantity, reason, note }) {
+    const payload = await api.post(`/stock/${productId}/damage`, { quantity, reason, note });
     return payload?.data ?? null;
   },
 };

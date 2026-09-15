@@ -7,6 +7,16 @@ const TX_TYPES = [
   'return_sale',
   'adjustment',
   'cancellation_reversal',
+  'damage',
+];
+
+const DAMAGE_REASONS = [
+  'Spoiled / Rotten',
+  'Damaged',
+  'Expired',
+  'Quality Issue',
+  'Leakage / Broken',
+  'Other',
 ];
 
 const productId = param('productId')
@@ -86,9 +96,37 @@ const transactions = [
     .withMessage('limit must be between 1 and 100'),
 ];
 
+const damage = [
+  productId,
+
+  body('quantity')
+    .exists({ values: 'falsy' })
+    .withMessage('quantity is required')
+    .isFloat({ gt: 0 })
+    .withMessage('quantity must be a positive number greater than zero'),
+
+  body('reason')
+    .isString()
+    .withMessage('reason must be a string')
+    .trim()
+    .notEmpty()
+    .withMessage('reason is required')
+    .isIn(DAMAGE_REASONS)
+    .withMessage(`reason must be one of: ${DAMAGE_REASONS.join(', ')}`),
+
+  body('note')
+    .optional({ values: 'falsy' })
+    .isString()
+    .withMessage('note must be a string')
+    .trim()
+    .isLength({ max: 200 })
+    .withMessage('note must be at most 200 characters'),
+];
+
 module.exports = {
   list,
   getByProduct,
   adjust,
+  damage,
   transactions,
 };

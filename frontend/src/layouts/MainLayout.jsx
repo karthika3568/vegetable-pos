@@ -25,15 +25,6 @@ export default function MainLayout() {
 
   const menuOpen = isMobile ? mobileNavOpen : !sidebarCollapsed;
 
-  const toggleNavigation = useCallback(() => {
-    if (isMobile) {
-      setMobileNavOpen((open) => !open);
-      return;
-    }
-
-    setSidebarCollapsed((collapsed) => !collapsed);
-  }, [isMobile]);
-
   // Accept an optional explicit open/closed value from Header (keyboard handler)
   // If `next` is boolean, set the mobile nav (on mobile) or collapsed state (desktop)
   const toggleNavigationExplicit = useCallback((next) => {

@@ -84,7 +84,10 @@ export const NAVIGATION = [
   {
     id: 'insights',
     labelKey: 'nav.insights',
-    items: [{ id: 'reports', labelKey: 'nav.reports', path: '/reports', permission: 'reports.view', icon: FiBarChart2 }],
+    items: [
+      { id: 'reports', labelKey: 'nav.reports', path: '/reports', permission: 'reports.view', icon: FiBarChart2 },
+      { id: 'analytics', labelKey: 'nav.analytics', path: '/analytics', permission: 'reports.view', icon: FiTrendingUp },
+    ],
   },
   {
     id: 'system',

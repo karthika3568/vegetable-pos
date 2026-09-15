@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { useToast } from '../context/ToastContext.jsx';
 import { useAsync } from '../hooks/useAsync.js';
 import { useAuth } from '../context/AuthContext.jsx';
-import { stockService, PRODUCT_STATUS_OPTIONS, TX_TYPE_LABELS } from '../services/stock.service.js';
+import { stockService, PRODUCT_STATUS_OPTIONS, TX_TYPE_LABELS, DAMAGE_REASONS } from '../services/stock.service.js';
 import PageLoader from '../components/PageLoader.jsx';
 import ErrorState from '../components/ErrorState.jsx';
 import EmptyState from '../components/EmptyState.jsx';
@@ -35,6 +35,7 @@ const TX_BADGE_TONES = {
   return_sale: 'badge-returned',
   adjustment: 'badge-warning',
   cancellation_reversal: 'badge-cancelled',
+  damage: 'badge-cancelled',
 };
 
 function TxTypeBadge({ type }) {
@@ -167,7 +168,167 @@ function StockAdjustModal({ record, onClose, onDone }) {
   );
 }
 
-function StockDetailModal({ productId, refreshKey, canAdjust, onAdjust, onClose }) {
+function StockDamageModal({ record, onClose, onDone }) {
+  const [quantity, setQuantity] = useState('');
+  const [reason, setReason] = useState('');
+  const [note, setNote] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const current = Number(record.quantity);
+  const rawQty = Number(quantity);
+  const qtyValid =
+    quantity.trim() !== '' && Number.isFinite(rawQty) && rawQty > 0 && rawQty <= current;
+  const resulting = qtyValid ? rounded3(current - rawQty) : null;
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError('');
+
+    if (quantity.trim() === '' || !Number.isFinite(rawQty) || rawQty <= 0) {
+      setError('Damage quantity must be a positive number greater than zero.');
+      return;
+    }
+    if (rawQty > current) {
+      setError(
+        `Damage quantity cannot exceed available stock (${formatQuantity(current)} ${record.unit || ''}).`
+      );
+      return;
+    }
+
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) {
+      setError('Reason is required.');
+      return;
+    }
+
+    const trimmedNote = note.trim();
+    if (trimmedReason === 'Other' && !trimmedNote) {
+      setError('A note is required when the reason is "Other".');
+      return;
+    }
+    if (trimmedNote.length > 200) {
+      setError('Note must be at most 200 characters.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const result = await stockService.recordDamage(record.product_id, {
+        quantity: rawQty,
+        reason: trimmedReason,
+        note: trimmedNote,
+      });
+      onDone(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The damage entry could not be recorded.');
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal title={`Record Damage / Wastage — ${record.product_name}`} onClose={onClose}>
+      <form className="form" onSubmit={handleSubmit} noValidate>
+        <div className="form-field">
+          <div className="pick-box">
+            <div className="pick-box-main">
+              {record.product_name}
+              {record.product_code ? <span className="cell-sub">{record.product_code}</span> : null}
+            </div>
+            <div className="pick-box-sub">
+              Current stock: {formatQuantity(current)} {record.unit || ''} · Min:{' '}
+              {formatQuantity(record.minimum_stock)} {record.unit || ''}
+            </div>
+          </div>
+        </div>
+
+        <div className="form-field">
+          <label htmlFor="damageQuantity">Damage Quantity</label>
+          <input
+            id="damageQuantity"
+            name="quantity"
+            type="number"
+            min="0"
+            step="0.001"
+            value={quantity}
+            onChange={(event) => setQuantity(event.target.value)}
+            placeholder={`e.g. 2 of ${formatQuantity(current)} ${record.unit || ''}`}
+            aria-describedby="damageQtyHint"
+            disabled={submitting}
+          />
+          <p id="damageQtyHint" className="field-hint">
+            The amount removed from available stock. Must be greater than zero and no more than the
+            current stock.
+          </p>
+        </div>
+
+        {qtyValid ? (
+          <div className="refund-preview" role="status" style={{ marginBottom: 16 }}>
+            Resulting stock: {formatQuantity(resulting)} {record.unit || ''}
+          </div>
+        ) : null}
+
+        <div className="form-field">
+          <label htmlFor="damageReason">Reason</label>
+          <select
+            id="damageReason"
+            name="reason"
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            disabled={submitting}
+          >
+            <option value="">Select a reason…</option>
+            {DAMAGE_REASONS.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="form-field">
+          <label htmlFor="damageNote">Note</label>
+          <textarea
+            id="damageNote"
+            name="note"
+            maxLength={200}
+            rows={2}
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            placeholder={
+              reason === 'Other'
+                ? 'Required — describe the damage reason…'
+                : 'Optional — e.g. Morning stock spoiled'
+            }
+            disabled={submitting}
+          />
+          <p className="field-hint">
+            {reason === 'Other'
+              ? 'Required when the reason is "Other".'
+              : 'Optional detail recorded on the immutable stock ledger.'}
+          </p>
+        </div>
+
+        {error ? (
+          <div className="form-alert" role="alert">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="form-actions">
+          <button type="button" className="btn btn-outline" onClick={onClose} disabled={submitting}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-danger" disabled={submitting}>
+            {submitting ? 'Recording…' : 'Record Damage'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function StockDetailModal({ productId, refreshKey, canAdjust, onAdjust, onDamage, onClose }) {
   const [txType, setTxType] = useState('');
   const [txPage, setTxPage] = useState(1);
 
@@ -262,6 +423,15 @@ function StockDetailModal({ productId, refreshKey, canAdjust, onAdjust, onClose 
                 title={record.status !== 'active' ? 'Only active products can be adjusted.' : undefined}
               >
                 Adjust Stock
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                onClick={() => onDamage(record)}
+                disabled={record.status !== 'active'}
+                title={record.status !== 'active' ? 'Only active products can record damage.' : undefined}
+              >
+                Record Damage
               </button>
             </div>
           ) : null}
@@ -371,6 +541,7 @@ export default function StockPage() {
   const [detailId, setDetailId] = useState(null);
   const [detailRefreshKey, setDetailRefreshKey] = useState(0);
   const [adjusting, setAdjusting] = useState(null);
+  const [damaging, setDamaging] = useState(null);
 
   const { showToast } = useToast();
 
@@ -410,6 +581,7 @@ export default function StockPage() {
   const openDetail = useCallback((id) => setDetailId(id), []);
   const closeDetail = useCallback(() => setDetailId(null), []);
   const closeAdjust = useCallback(() => setAdjusting(null), []);
+  const closeDamage = useCallback(() => setDamaging(null), []);
 
   function handleAdjustDone(result) {
     setAdjusting(null);
@@ -417,6 +589,18 @@ export default function StockPage() {
       `Stock adjusted for ${result?.product_name || 'product'}: ${formatQuantity(result?.movement?.before)} → ${formatQuantity(
         result?.movement?.after
       )} ${result?.unit || ''}.`
+    );
+    list.refetch();
+    setDetailRefreshKey((key) => key + 1);
+  }
+
+  function handleDamageDone(result) {
+    setDamaging(null);
+    const damagedQty = Math.abs(Number(result?.movement?.change) || 0);
+    showNotice(
+      `Damage recorded successfully: ${formatQuantity(damagedQty)} ${result?.unit || ''} of ${
+        result?.product_name || 'product'
+      } recorded${Number(result?.lossAmount) > 0 ? ` (loss ${formatMoney(result.lossAmount)})` : ''}.`
     );
     list.refetch();
     setDetailRefreshKey((key) => key + 1);
@@ -538,6 +722,17 @@ export default function StockPage() {
                         {canAdjust ? (
                           <button
                             type="button"
+                            className="btn btn-danger-text btn-sm"
+                            onClick={() => setDamaging(record)}
+                            disabled={record.status !== 'active'}
+                            title={record.status !== 'active' ? 'Only active products can record damage.' : undefined}
+                          >
+                            Damage
+                          </button>
+                        ) : null}
+                        {canAdjust ? (
+                          <button
+                            type="button"
                             className="btn btn-outline btn-sm"
                             onClick={() => setAdjusting(record)}
                             disabled={record.status !== 'active'}
@@ -564,12 +759,17 @@ export default function StockPage() {
           refreshKey={detailRefreshKey}
           canAdjust={canAdjust}
           onAdjust={setAdjusting}
+          onDamage={setDamaging}
           onClose={closeDetail}
         />
       ) : null}
 
       {adjusting ? (
         <StockAdjustModal record={adjusting} onClose={closeAdjust} onDone={handleAdjustDone} />
+      ) : null}
+
+      {damaging ? (
+        <StockDamageModal record={damaging} onClose={closeDamage} onDone={handleDamageDone} />
       ) : null}
     </div>
   );

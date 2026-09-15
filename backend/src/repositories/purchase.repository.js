@@ -36,6 +36,8 @@ const BASE_SELECT = `
     pu.id,
     pu.supplier_id,
     s.name AS supplier_name,
+    pu.purchase_order_id,
+    po.po_number,
     pu.invoice_number,
     pu.purchase_date,
     pu.total_amount,
@@ -50,6 +52,7 @@ const BASE_SELECT = `
     pu.updated_at
   FROM purchases pu
   JOIN suppliers s ON s.id = pu.supplier_id
+  LEFT JOIN purchase_orders po ON po.id = pu.purchase_order_id
   LEFT JOIN users u ON u.id = pu.created_by
 `;
 
@@ -81,10 +84,11 @@ async function findAll({
     where.push(`(
       s.name LIKE ?
       OR pu.invoice_number LIKE ?
+      OR po.po_number LIKE ?
     )`);
 
     const pattern = `%${search}%`;
-    params.push(pattern, pattern);
+    params.push(pattern, pattern, pattern);
   }
 
   if (supplierId) {
@@ -115,6 +119,7 @@ async function findAll({
     `SELECT COUNT(*) AS total
      FROM purchases pu
      JOIN suppliers s ON s.id = pu.supplier_id
+     LEFT JOIN purchase_orders po ON po.id = pu.purchase_order_id
      ${whereSql}`,
     params
   );

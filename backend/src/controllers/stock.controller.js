@@ -39,6 +39,18 @@ const adjust = asyncHandler(async (req, res) => {
   response.ok(res, stock, 'Stock adjusted');
 });
 
+const damage = asyncHandler(async (req, res) => {
+  const stock = await stockService.recordDamage({
+    productId: Number(req.params.productId),
+    quantity: Number(req.body.quantity),
+    reason: req.body.reason,
+    note: req.body.note,
+    createdBy: req.user.id,
+  });
+
+  response.created(res, stock, 'Damage recorded successfully');
+});
+
 const transactions = asyncHandler(async (req, res) => {
   const {
     type,
@@ -64,5 +76,6 @@ module.exports = {
   list,
   getByProduct,
   adjust,
+  damage,
   transactions,
 };

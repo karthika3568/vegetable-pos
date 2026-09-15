@@ -15,6 +15,7 @@ import ReturnsPage from '../pages/ReturnsPage.jsx';
 import ExpensesIncomePage from '../pages/ExpensesIncomePage.jsx';
 import ProfitPage from '../pages/ProfitPage.jsx';
 import ReportsPage from '../pages/ReportsPage.jsx';
+import AnalyticsPage from '../pages/AnalyticsPage.jsx';
 import StockPage from '../pages/StockPage.jsx';
 import CategoriesPage from '../pages/CategoriesPage.jsx';
 import VariantsPage from '../pages/VariantsPage.jsx';
@@ -144,6 +145,15 @@ export default function AppRoutes() {
           element={
             <RequirePermission permission="reports.view">
               <ReportsPage />
+            </RequirePermission>
+          }
+        />
+
+        <Route
+          path="analytics"
+          element={
+            <RequirePermission permission="reports.view">
+              <AnalyticsPage />
             </RequirePermission>
           }
         />

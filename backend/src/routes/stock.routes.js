@@ -43,4 +43,13 @@ router.patch(
   stockController.adjust
 );
 
+router.post(
+  '/:productId/damage',
+  authenticate,
+  authorize('stock.adjust'),
+  stockValidator.damage,
+  validate,
+  stockController.damage
+);
+
 module.exports = router;

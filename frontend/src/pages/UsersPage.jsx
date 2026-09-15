@@ -2,6 +2,8 @@ import { useCallback, useState } from 'react';
 import { useToast } from '../context/ToastContext.jsx';
 import { useAsync } from '../hooks/useAsync.js';
 import { userService } from '../services/user.service.js';
+import { NAVIGATION } from '../config/navigation.js';
+import { useLanguage } from '../i18n/index.jsx';
 import PageLoader from '../components/PageLoader.jsx';
 import ErrorState from '../components/ErrorState.jsx';
 import EmptyState from '../components/EmptyState.jsx';
@@ -9,6 +11,70 @@ import Modal from '../components/Modal.jsx';
 import ActionButton from '../components/ActionButton.jsx';
 
 const LIMIT = 50;
+
+// Group labels keep the existing DB `module` grouping (so a permission is
+// never duplicated) while presenting the same logical families the Admin
+// sidebar uses. The labels below are display-only - the permission records
+// themselves are not renamed or invented.
+const SECTION_LABELS = {
+  reports: 'Reports & Insights',
+  sales: 'Sales & POS',
+  purchases: 'Stock & Purchases',
+  stock: 'Stock & Purchases',
+  products: 'Catalog & Products',
+  customers: 'Customers & Suppliers',
+  suppliers: 'Customers & Suppliers',
+  credit: 'Credit & Payments',
+  expenses: 'Expenses & Income',
+  settings: 'System & Settings',
+  users: 'Users & Access',
+};
+
+const SECTION_ORDER = [
+  'sales',
+  'purchases',
+  'stock',
+  'products',
+  'customers',
+  'suppliers',
+  'credit',
+  'expenses',
+  'reports',
+  'settings',
+  'users',
+];
+
+function buildPermissionGroups(permissions) {
+  const groups = new Map();
+  for (const permission of permissions) {
+    const module = permission.module || 'other';
+    if (!groups.has(module)) groups.set(module, []);
+    groups.get(module).push(permission);
+  }
+  return Array.from(groups.entries())
+    .map(([module, items]) => ({
+      module,
+      label: SECTION_LABELS[module] || module,
+      order: SECTION_ORDER.includes(module) ? SECTION_ORDER.indexOf(module) : SECTION_ORDER.length,
+      items,
+    }))
+    .sort((a, b) => a.order - b.order);
+}
+
+// Which sidebar pages are controlled by each permission code, derived from
+// the real navigation config so the modal always matches the current Admin
+// modules (Dashboard, POS, Invoices, Product Analytics, etc.).
+function buildUnlockMap(t) {
+  const map = {};
+  for (const section of NAVIGATION) {
+    for (const item of section.items) {
+      if (!item.permission) continue;
+      if (!map[item.permission]) map[item.permission] = [];
+      map[item.permission].push(t(item.labelKey ?? item.id));
+    }
+  }
+  return map;
+}
 
 function statusLabel(status) {
   return status.charAt(0).toUpperCase() + status.slice(1);
@@ -19,24 +85,28 @@ function StatusBadge({ status }) {
 }
 
 function PermissionPicker({ permissions, selected, onChange, disabled }) {
-  const grouped = permissions.reduce((groups, permission) => {
-    const module = permission.module || 'other';
-    if (!groups[module]) groups[module] = [];
-    groups[module].push(permission);
-    return groups;
-  }, {});
+  const { t } = useLanguage();
+  const groups = buildPermissionGroups(permissions);
+  const unlockMap = buildUnlockMap(t);
 
   function toggle(code) {
     onChange(selected.includes(code) ? selected.filter((item) => item !== code) : [...selected, code]);
+  }
+
+  function selectAll() {
+    onChange(permissions.map((item) => item.code));
   }
 
   return (
     <fieldset className="permission-fieldset" disabled={disabled}>
       <legend>Employee permissions</legend>
       <div className="permission-toolbar">
-        <span>Select the exact access this employee needs.</span>
+        <span>
+          {permissions.length} permission{permissions.length === 1 ? '' : 's'} · select the exact access this
+          employee needs.
+        </span>
         <div className="permission-toolbar-actions">
-          <button type="button" className="btn btn-outline btn-sm" onClick={() => onChange(permissions.map((item) => item.code))}>
+          <button type="button" className="btn btn-outline btn-sm" onClick={selectAll}>
             Select all
           </button>
           <button type="button" className="btn btn-outline btn-sm" onClick={() => onChange([])}>
@@ -45,23 +115,29 @@ function PermissionPicker({ permissions, selected, onChange, disabled }) {
         </div>
       </div>
       <div className="permission-groups">
-        {Object.entries(grouped).map(([module, items]) => (
-          <section className="permission-group" key={module}>
-            <h3>{module}</h3>
+        {groups.map((group) => (
+          <section className="permission-group" key={group.module}>
+            <h3>{group.label}</h3>
             <div className="permission-options">
-              {items.map((permission) => (
-                <label className="permission-option" key={permission.code}>
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(permission.code)}
-                    onChange={() => toggle(permission.code)}
-                  />
-                  <span>
-                    <strong>{permission.code}</strong>
-                    {permission.description ? <small>{permission.description}</small> : null}
-                  </span>
-                </label>
-              ))}
+              {group.items.map((permission) => {
+                const unlocks = unlockMap[permission.code];
+                return (
+                  <label className="permission-option" key={permission.code}>
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(permission.code)}
+                      onChange={() => toggle(permission.code)}
+                    />
+                    <span>
+                      <strong>{permission.code}</strong>
+                      {permission.description ? <small>{permission.description}</small> : null}
+                      {unlocks && unlocks.length > 0 ? (
+                        <small className="permission-modules">{unlocks.join(' · ')}</small>
+                      ) : null}
+                    </span>
+                  </label>
+                );
+              })}
             </div>
           </section>
         ))}

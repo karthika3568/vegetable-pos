@@ -69,6 +69,8 @@ async function ensureProductForAdjustment(productId) {
   if (product.status !== 'active') {
     throw ApiError.badRequest('Stock can only be adjusted for an active product');
   }
+
+  return product;
 }
 
 async function adjustProduct({ productId, delta, note, createdBy }) {
@@ -101,6 +103,85 @@ async function adjustProduct({ productId, delta, note, createdBy }) {
     const updated = await stockRepository.findByProductId(productId);
 
     return { ...updated, movement: result };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+/**
+ * Record damage / wastage: a pure stock-reduction movement.
+ *
+ * Reuses the exact same architecture as a manual adjustment - one
+ * signed change applied atomically through stockRepository.applyChange()
+ * (FOR UPDATE row lock, quantity can never go below zero, immutable
+ * ledger row written in the same transaction). Damage is NEVER a sale,
+ * purchase, return, credit transaction or invoice.
+ *
+ * A damage loss amount is derived from the product's recorded purchase
+ * cost (products.cost_price) - real cost data, never hardcoded - and
+ * returned to the caller so the UI/history can report the financial
+ * impact. The ledger row itself stays quantity-only (matching the
+ * existing stock_transactions schema).
+ */
+async function recordDamage({ productId, quantity, reason, note, createdBy }) {
+  const qty = Number(quantity);
+
+  if (!Number.isFinite(qty) || qty <= 0) {
+    throw ApiError.badRequest('quantity must be a positive number');
+  }
+
+  const trimmedReason = typeof reason === 'string' ? reason.trim() : '';
+  const trimmedNote = typeof note === 'string' ? note.trim() : '';
+
+  if (!trimmedReason) {
+    throw ApiError.badRequest('reason is required');
+  }
+
+  if (trimmedReason === 'Other' && !trimmedNote) {
+    throw ApiError.badRequest('a note is required when reason is "Other"');
+  }
+
+  const product = await ensureProductForAdjustment(productId);
+
+  const ledgerNote =
+    trimmedReason === 'Other'
+      ? trimmedNote
+      : trimmedNote
+        ? `${trimmedReason} - ${trimmedNote}`
+        : trimmedReason;
+
+  const lossAmount = Math.round(qty * Number(product.purchase_price) * 100) / 100;
+
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const result = await stockRepository.applyChange({
+      conn: connection,
+      productId,
+      change: -qty,
+      transactionType: 'damage',
+      note: ledgerNote,
+      referenceTable: null,
+      referenceId: null,
+      createdBy,
+    });
+
+    await connection.commit();
+
+    const updated = await stockRepository.findByProductId(productId);
+
+    return {
+      ...updated,
+      movement: result,
+      reason: trimmedReason,
+      note: trimmedNote,
+      lossAmount,
+    };
   } catch (error) {
     await connection.rollback();
     throw error;
@@ -145,5 +226,6 @@ module.exports = {
   list,
   getByProductId,
   adjustProduct,
+  recordDamage,
   listTransactions,
 };
