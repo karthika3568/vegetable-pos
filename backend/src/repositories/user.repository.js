@@ -1,7 +1,7 @@
 const { pool } = require('../config/db');
 
 const SAFE_COLUMNS = `
-  u.id, u.role_id, u.username, u.email, u.full_name, u.phone,
+  u.id, u.role_id, u.username, u.email, u.full_name, u.phone, u.address,
   u.status, u.last_login_at, u.created_at, u.updated_at,
   r.name AS role_name
 `;
@@ -37,6 +37,14 @@ async function findById(id) {
   return rows[0] || null;
 }
 
+async function findByPhone(phone, excludeId = null) {
+  const [rows] = await pool.query(
+    `SELECT id, phone FROM users WHERE phone = ? AND (? IS NULL OR id <> ?) LIMIT 1`,
+    [phone, excludeId, excludeId]
+  );
+  return rows[0] || null;
+}
+
 async function findAll({ status, roleId, limit, offset }) {
   const where = [];
   const params = [];
@@ -61,21 +69,22 @@ async function findAll({ status, roleId, limit, offset }) {
   return { rows, total };
 }
 
-async function create({ username, passwordHash, fullName, email, phone, roleId }) {
+async function create({ username, passwordHash, fullName, email, phone, address, roleId }) {
   const [result] = await pool.query(
-    `INSERT INTO users (role_id, username, email, password_hash, full_name, phone)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [roleId, username, email || null, passwordHash, fullName, phone || null]
+    `INSERT INTO users (role_id, username, email, password_hash, full_name, phone, address)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [roleId, username, email || null, passwordHash, fullName, phone || null, address || null]
   );
   return findById(result.insertId);
 }
 
-async function update(id, { fullName, email, phone, roleId }) {
+async function update(id, { fullName, email, phone, address, roleId }) {
   const fields = [];
   const params = [];
   if (fullName !== undefined) { fields.push('full_name = ?'); params.push(fullName); }
   if (email !== undefined) { fields.push('email = ?'); params.push(email); }
   if (phone !== undefined) { fields.push('phone = ?'); params.push(phone); }
+  if (address !== undefined) { fields.push('address = ?'); params.push(address); }
   if (roleId !== undefined) { fields.push('role_id = ?'); params.push(roleId); }
   if (fields.length === 0) return findById(id);
 
@@ -99,6 +108,6 @@ async function updateLastLogin(id) {
 }
 
 module.exports = {
-  findAuthRecordByUsername, findAuthRecordById, findById, findAll,
+  findAuthRecordByUsername, findAuthRecordById, findById, findByPhone, findAll,
   create, update, setStatus, bumpTokenVersion, updateLastLogin,
 };

@@ -83,6 +83,7 @@ CREATE TABLE users (
     password_hash   VARCHAR(255) NOT NULL,
     full_name       VARCHAR(100) NOT NULL,
     phone           VARCHAR(20)  NULL,
+    address         VARCHAR(255) NULL,
     status          ENUM('active','inactive','suspended') NOT NULL DEFAULT 'active',
     -- Incremented on logout, force-logout, and disable. authenticate
     -- compares this against the JWT's tokenVersion every request, so a

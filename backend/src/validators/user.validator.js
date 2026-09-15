@@ -10,7 +10,18 @@ const create = [
     .isLength({ min: 8 }).withMessage('password must be at least 8 characters'),
   body('fullName').trim().notEmpty().withMessage('fullName is required'),
   body('email').optional({ nullable: true }).trim().isEmail().withMessage('email must be valid'),
-  body('phone').optional({ nullable: true }).trim().isLength({ max: 20 }),
+  body('phone')
+    .optional({ nullable: true, checkFalsy: true })
+    .trim()
+    .isLength({ max: 20 }).withMessage('phone must be at most 20 characters')
+    .custom((value) => {
+      const digitCount = (value.match(/\d/g) || []).length;
+      if (!/^\+?[0-9()\s.-]+$/.test(value) || digitCount < 7) {
+        throw new Error('phone must contain at least 7 digits and use a valid phone format');
+      }
+      return true;
+    }),
+  body('address').optional({ nullable: true, checkFalsy: true }).trim().isLength({ max: 255 }).withMessage('address must be at most 255 characters'),
   body('roleId').isInt({ min: 1 }).withMessage('roleId must be a positive integer'),
   body('permissions').optional().isArray().withMessage('permissions must be an array of permission codes'),
   body('permissions.*').optional().isString(),
@@ -20,7 +31,18 @@ const update = [
   param('id').isInt({ min: 1 }).withMessage('id must be a positive integer'),
   body('fullName').optional().trim().notEmpty().withMessage('fullName cannot be empty'),
   body('email').optional({ nullable: true }).trim().isEmail().withMessage('email must be valid'),
-  body('phone').optional({ nullable: true }).trim().isLength({ max: 20 }),
+  body('phone')
+    .optional({ nullable: true, checkFalsy: true })
+    .trim()
+    .isLength({ max: 20 }).withMessage('phone must be at most 20 characters')
+    .custom((value) => {
+      const digitCount = (value.match(/\d/g) || []).length;
+      if (!/^\+?[0-9()\s.-]+$/.test(value) || digitCount < 7) {
+        throw new Error('phone must contain at least 7 digits and use a valid phone format');
+      }
+      return true;
+    }),
+  body('address').optional({ nullable: true, checkFalsy: true }).trim().isLength({ max: 255 }).withMessage('address must be at most 255 characters'),
   body('roleId').optional().isInt({ min: 1 }).withMessage('roleId must be a positive integer'),
 ];
 

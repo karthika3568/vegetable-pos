@@ -7,6 +7,8 @@ function mapUser(raw) {
     roleId: raw.role_id != null ? Number(raw.role_id) : null,
     roleName: raw.role_name ?? '',
     fullName: raw.full_name ?? '',
+    phone: raw.phone ?? '',
+    address: raw.address ?? '',
     lastLoginAt: raw.last_login_at ?? null,
     createdAt: raw.created_at ?? null,
     permissions: Array.isArray(raw.permissions) ? raw.permissions : [],

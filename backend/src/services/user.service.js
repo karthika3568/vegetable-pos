@@ -13,6 +13,19 @@ const auditRepository = require('../repositories/audit.repository');
 const password = require('../utils/password');
 const ApiError = require('../utils/ApiError');
 
+function normalizeOptionalText(value) {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const normalized = String(value).trim();
+  return normalized || null;
+}
+
+async function ensurePhoneAvailable(phone, excludeId = null) {
+  if (!phone) return;
+  const existing = await userRepository.findByPhone(phone, excludeId);
+  if (existing) throw ApiError.badRequest('phone is already assigned to another user');
+}
+
 async function list({ status, roleId, page = 1, limit = 20 }) {
   const offset = (page - 1) * limit;
   const { rows, total } = await userRepository.findAll({ status, roleId, limit, offset });
@@ -28,7 +41,10 @@ async function getById(id) {
   return { ...user, permissions };
 }
 
-async function create({ username, password: plainPassword, fullName, email, phone, roleId, permissions }) {
+async function create({ username, password: plainPassword, fullName, email, phone, address, roleId, permissions }) {
+  const normalizedPhone = normalizeOptionalText(phone);
+  const normalizedAddress = normalizeOptionalText(address);
+  await ensurePhoneAvailable(normalizedPhone);
   const role = await roleRepository.findById(roleId);
   if (!role) throw ApiError.badRequest(`roleId ${roleId} does not correspond to an existing role`);
 
@@ -45,7 +61,7 @@ async function create({ username, password: plainPassword, fullName, email, phon
   }
 
   const passwordHash = await password.hash(plainPassword);
-  const user = await userRepository.create({ username, passwordHash, fullName, email, phone, roleId });
+  const user = await userRepository.create({ username, passwordHash, fullName, email, phone: normalizedPhone, address: normalizedAddress, roleId });
 
   if (requestedPermissions.length > 0 && role.name !== 'admin') {
     await permissionRepository.replaceUserPermissions(user.id, requestedPermissions, null);
@@ -54,13 +70,16 @@ async function create({ username, password: plainPassword, fullName, email, phon
   return getById(user.id);
 }
 
-async function update(id, { fullName, email, phone, roleId }) {
-  await getById(id);
+async function update(id, { fullName, email, phone, address, roleId }) {
+  const existing = await getById(id);
+  const normalizedPhone = normalizeOptionalText(phone);
+  const normalizedAddress = normalizeOptionalText(address);
+  if (phone !== undefined && normalizedPhone !== existing.phone) await ensurePhoneAvailable(normalizedPhone, id);
   if (roleId !== undefined) {
     const role = await roleRepository.findById(roleId);
     if (!role) throw ApiError.badRequest(`roleId ${roleId} does not correspond to an existing role`);
   }
-  return userRepository.update(id, { fullName, email, phone, roleId });
+  return userRepository.update(id, { fullName, email, phone: normalizedPhone, address: normalizedAddress, roleId });
 }
 
 /**

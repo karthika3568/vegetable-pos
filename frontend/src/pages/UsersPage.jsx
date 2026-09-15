@@ -150,6 +150,8 @@ function UserFormModal({ mode, initial, roles, permissions, onClose, onSubmit })
   const editing = mode === 'edit';
   const [username, setUsername] = useState(initial?.username ?? '');
   const [fullName, setFullName] = useState(initial?.fullName ?? '');
+  const [phone, setPhone] = useState(initial?.phone ?? '');
+  const [address, setAddress] = useState(initial?.address ?? '');
   const [password, setPassword] = useState('');
   const defaultRole = roles.find((role) => role.name !== 'admin') ?? roles[0];
   const [roleId, setRoleId] = useState(String(initial?.roleId ?? defaultRole?.id ?? ''));
@@ -165,10 +167,20 @@ function UserFormModal({ mode, initial, roles, permissions, onClose, onSubmit })
     if (!fullName.trim()) return setError('Name is required.');
     if (!roleId) return setError('Role is required.');
     if (!editing && password.length < 8) return setError('Password must be at least 8 characters.');
+    const trimmedPhone = phone.trim();
+    const digitCount = (trimmedPhone.match(/\d/g) || []).length;
+    if (trimmedPhone && (!/^\+?[0-9()\s.-]+$/.test(trimmedPhone) || digitCount < 7)) {
+      return setError('Phone must contain at least 7 digits and use a valid phone format.');
+    }
 
     setSubmitting(true);
     try {
-      const userPayload = { fullName: fullName.trim(), roleId: Number(roleId) };
+      const userPayload = {
+        fullName: fullName.trim(),
+        phone: trimmedPhone || null,
+        address: address.trim() || null,
+        roleId: Number(roleId),
+      };
       if (!editing) Object.assign(userPayload, { username: username.trim(), password, permissions: selectedPermissions });
       await onSubmit(userPayload, editing && !isAdminRole ? selectedPermissions : null);
     } catch (err) {
@@ -188,6 +200,14 @@ function UserFormModal({ mode, initial, roles, permissions, onClose, onSubmit })
           <div className="form-field">
             <label htmlFor="userFullName">Name</label>
             <input id="userFullName" value={fullName} onChange={(event) => setFullName(event.target.value)} disabled={submitting} required />
+          </div>
+          <div className="form-field">
+            <label htmlFor="userPhone">Phone Number</label>
+            <input id="userPhone" type="tel" inputMode="tel" maxLength={20} value={phone} onChange={(event) => setPhone(event.target.value)} disabled={submitting} />
+          </div>
+          <div className="form-field">
+            <label htmlFor="userAddress">Address</label>
+            <textarea id="userAddress" rows="3" maxLength={255} value={address} onChange={(event) => setAddress(event.target.value)} disabled={submitting} />
           </div>
           {!editing ? (
             <div className="form-field">
@@ -222,6 +242,8 @@ function UserViewModal({ user, onClose }) {
     <Modal title={`Employee: ${user.fullName || user.username}`} onClose={onClose}>
       <dl className="user-details">
         <div><dt>Username</dt><dd>{user.username}</dd></div>
+        <div><dt>Phone</dt><dd>{user.phone || '—'}</dd></div>
+        <div><dt>Address</dt><dd>{user.address || '—'}</dd></div>
         <div><dt>Role</dt><dd>{user.roleName}</dd></div>
         <div><dt>Status</dt><dd><StatusBadge status={user.status} /></dd></div>
         <div><dt>Permissions</dt><dd>{user.roleName === 'admin' ? 'All permissions' : user.permissions.join(', ') || 'None assigned'}</dd></div>
