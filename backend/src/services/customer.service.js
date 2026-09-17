@@ -61,13 +61,13 @@ async function ensurePhoneAvailable(phone, excludeId = null) {
   }
 }
 
-async function create({ name, phone, email, address, state, creditLimit }) {
+async function create({ name, phone, email, address, state, creditLimit, openingBalance }) {
   await ensurePhoneAvailable(phone);
 
-  return customerRepository.create({ name, phone, email, address, state, creditLimit });
+  return customerRepository.create({ name, phone, email, address, state, creditLimit, openingBalance });
 }
 
-async function update(id, { name, phone, email, address, state, creditLimit }) {
+async function update(id, { name, phone, email, address, state, creditLimit, openingBalance }) {
   const existing = await getById(id);
 
   if (phone !== undefined && phone !== null && phone !== '') {
@@ -83,6 +83,7 @@ async function update(id, { name, phone, email, address, state, creditLimit }) {
     address,
     state,
     creditLimit,
+    openingBalance,
   });
 }
 

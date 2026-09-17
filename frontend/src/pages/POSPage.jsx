@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useAsync.js';
 import { posService } from '../services/pos.service.js';
 import { salesService, PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from '../services/sales.service.js';
-import { creditService } from '../services/credit.service.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { useLanguage } from '../i18n/index.jsx';
@@ -13,25 +12,21 @@ import Pagination from '../components/Pagination.jsx';
 import Spinner from '../components/Spinner.jsx';
 import ProductImage from '../components/ProductImage.jsx';
 import { formatMoney, formatQuantity } from '../utils/format.js';
+import {
+  PAYMENT_MODES,
+  round2,
+  defaultPaymentRows,
+  computePaymentTotals,
+} from '../utils/posPayment.js';
 import { playPosSound } from '../utils/sounds.js';
 
 const PRODUCT_PAGE_SIZE = 12;
 const PAYMENT_MAX = 20;
-const PAYMENT_MODES = {
-  full: 'full',
-  partial: 'partial',
-  credit: 'credit',
-  split: 'split',
-};
 const PAYMENT_TYPE_LABELS_KEYS = {
   cash: 'status.cash',
   credit: 'status.credit',
   partial: 'status.partial',
 };
-
-function round2(value) {
-  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
-}
 
 function round3(value) {
   const n = Math.round((Number(value) + Number.EPSILON) * 1000) / 1000;
@@ -692,17 +687,15 @@ export default function POSPage() {
     ]);
   }, [preview.total, paymentMode, paymentTouched, paymentRows.length]);
 
-  const paidTotal = useMemo(
-    () =>
-      round2(
-        paymentRows.reduce(
-          (sum, payment) => payment.method === 'credit'
-            ? sum
-            : sum + (payment.amount === '' ? 0 : Number(payment.amount) || 0),
-          0
-        )
-      ),
-    [paymentRows]
+  const {
+    paidTotal,
+    owesMoney,
+    credit: newCreditAmount,
+    balanceDue,
+    paymentOverTotal,
+  } = useMemo(
+    () => computePaymentTotals(paymentRows, preview.total),
+    [paymentRows, preview.total]
   );
 
   const paymentInvalid = paymentRows.some(
@@ -711,14 +704,11 @@ export default function POSPage() {
   const duplicatePaymentMethod = paymentRows.some(
     (payment, index) => paymentRows.findIndex((row) => row.method === payment.method) !== index
   );
-  const paymentOverTotal = paymentRows.length > 0 && paidTotal > preview.total;
-  const owesMoney = preview.total > 0 && paidTotal < preview.total;
   const creditRows = paymentRows.filter((payment) => payment.method === 'credit');
   const creditRequired = paymentMode === PAYMENT_MODES.partial || paymentMode === PAYMENT_MODES.credit || owesMoney;
 
   const selectedCustomerCreditLimit = selectedCustomer ? Number(selectedCustomer.creditLimit) || 0 : 0;
   const selectedCustomerOutstanding = selectedCustomer ? Number(selectedCustomer.currentBalance) || 0 : 0;
-  const newCreditAmount = owesMoney ? round2(Math.max(0, preview.total - paidTotal)) : 0;
   const availableCreditAmount = round2(Math.max(0, selectedCustomerCreditLimit - selectedCustomerOutstanding - newCreditAmount));
   const creditOverLimit =
     selectedCustomerCreditLimit > 0 && selectedCustomerOutstanding + newCreditAmount > selectedCustomerCreditLimit;
@@ -866,17 +856,14 @@ export default function POSPage() {
   function handlePaymentModeChange(nextMode) {
     setPaymentMode(nextMode);
     setPaymentTouched(false);
-    if (nextMode === PAYMENT_MODES.credit) {
-      setPaymentRows([]);
-      return;
-    }
-    setPaymentRows([{
-      method: paymentRows[0]?.method === 'credit' ? 'cash' : paymentRows[0]?.method || 'cash',
-      amount: nextMode === PAYMENT_MODES.full || nextMode === PAYMENT_MODES.split ? String(preview.total) : '',
-    }]);
+    const currentMethod = paymentRows[0]?.method === 'credit' ? 'cash' : paymentRows[0]?.method || 'cash';
+    setPaymentRows(defaultPaymentRows(nextMode, preview.total, currentMethod, PAYMENT_METHODS));
   }
 
   function handleAddPayment() {
+    // Extra rows are a split-payment concept only - the normal
+    // (full / partial) state must always stay at one row.
+    if (paymentMode !== PAYMENT_MODES.split) return;
     setPaymentTouched(true);
     setPaymentRows((rows) => {
       if (rows.length >= PAYMENT_MAX) return rows;
@@ -954,6 +941,7 @@ export default function POSPage() {
               .map((payment) => ({ method: payment.method, amount: Number(payment.amount) })),
           }
         : {}),
+      creditRequested: owesMoney,
     };
 
     submittingRef.current = true;
@@ -961,9 +949,6 @@ export default function POSPage() {
     setSubmitError('');
     try {
       const sale = await salesService.createSale(payload);
-      if (owesMoney) {
-        await creditService.createFromSale(sale.id);
-      }
       setCompletedSale(sale);
       showToast(`Sale completed. Invoice ${sale.invoice_number} is ready.`, 'success');
       playPosSound('payment', soundEnabled && settings.sound_payment !== 'off');
@@ -1384,7 +1369,7 @@ export default function POSPage() {
           <div className="pos-section">
             <div className="pos-section-head">
               <h3 className="card-title">{t('pos.payment')}</h3>
-              {paymentMode === PAYMENT_MODES.full || paymentMode === PAYMENT_MODES.split ? (
+              {paymentMode === PAYMENT_MODES.split ? (
                 <button
                   type="button"
                   className="btn btn-outline btn-sm"
@@ -1452,7 +1437,7 @@ export default function POSPage() {
               <div className="summary-item">
                 <span className="summary-label">{t('pos.balanceDue')}</span>
                 <span className={`summary-value${paymentOverTotal ? ' tone-danger' : ''}`}>
-                  <Money value={round2(Math.max(0, preview.total - paidTotal))} />
+                  <Money value={balanceDue} />
                 </span>
               </div>
             </div>

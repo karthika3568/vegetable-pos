@@ -31,10 +31,6 @@ const create = [
   body('items.*.orderedQuantity')
     .isFloat({ gt: 0 })
     .withMessage('each item orderedQuantity must be a positive number'),
-
-  body('items.*.expectedPrice')
-    .isFloat({ min: 0 })
-    .withMessage('each item expectedPrice must be a non-negative number'),
 ];
 
 const update = [
@@ -77,11 +73,6 @@ const update = [
     .optional()
     .isFloat({ gt: 0 })
     .withMessage('each item orderedQuantity must be a positive number'),
-
-  body('items.*.expectedPrice')
-    .optional()
-    .isFloat({ min: 0 })
-    .withMessage('each item expectedPrice must be a non-negative number'),
 ];
 
 const getId = [
@@ -154,11 +145,6 @@ const receive = [
     .optional({ values: 'falsy' })
     .isFloat({ min: 0 })
     .withMessage('each item damagedQuantity must be a non-negative number'),
-
-  body('items.*.purchasePrice')
-    .optional({ values: 'falsy' })
-    .isFloat({ min: 0 })
-    .withMessage('each item purchasePrice must be a non-negative number'),
 ];
 
 module.exports = {

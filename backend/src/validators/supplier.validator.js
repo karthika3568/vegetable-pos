@@ -35,6 +35,11 @@ const create = [
     .trim()
     .isLength({ max: 255 })
     .withMessage('address must be at most 255 characters'),
+
+  body('openingBalance')
+    .optional({ nullable: true })
+    .isFloat({ min: 0 })
+    .withMessage('openingBalance must be a non-negative number'),
 ];
 
 const update = [
@@ -77,6 +82,11 @@ const update = [
     .trim()
     .isLength({ max: 255 })
     .withMessage('address must be at most 255 characters'),
+
+  body('openingBalance')
+    .optional({ nullable: true })
+    .isFloat({ min: 0 })
+    .withMessage('openingBalance must be a non-negative number'),
 ];
 
 const setStatus = [
@@ -118,10 +128,36 @@ const list = [
     .withMessage('limit must be between 1 and 100'),
 ];
 
+const recordPayment = [
+  param('id')
+    .isInt({ min: 1 })
+    .withMessage('id must be a positive integer'),
+
+  body('amount')
+    .isFloat({ gt: 0 })
+    .withMessage('amount must be a positive number'),
+
+  body('method')
+    .isIn(['cash', 'card', 'upi', 'bank_transfer', 'other'])
+    .withMessage('method must be one of: cash, card, upi, bank_transfer, other'),
+
+  body('paymentDate')
+    .optional()
+    .isISO8601()
+    .withMessage('paymentDate must be a valid date (YYYY-MM-DD)'),
+
+  body('notes')
+    .optional({ nullable: true })
+    .trim()
+    .isLength({ max: 255 })
+    .withMessage('notes must be at most 255 characters'),
+];
+
 module.exports = {
   create,
   update,
   setStatus,
   getById,
   list,
+  recordPayment,
 };

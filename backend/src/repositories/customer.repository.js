@@ -11,7 +11,7 @@
 const { pool } = require('../config/db');
 
 const BASE_COLUMNS = `
-  id, name, phone, email, address, state, credit_limit, current_balance,
+  id, name, phone, email, address, state, opening_balance, credit_limit, current_balance,
   status, created_at, updated_at
 `;
 
@@ -91,17 +91,17 @@ async function findByPhone(phone, excludeId = null) {
   return rows[0] || null;
 }
 
-async function create({ name, phone, email, address, state, creditLimit }) {
+async function create({ name, phone, email, address, state, creditLimit, openingBalance }) {
   const [result] = await pool.query(
-    `INSERT INTO customers (name, phone, email, address, state, credit_limit)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [name, phone || null, email || null, address || null, state || null, creditLimit ?? 0.0]
+    `INSERT INTO customers (name, phone, email, address, state, credit_limit, opening_balance, current_balance)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [name, phone || null, email || null, address || null, state || null, creditLimit ?? 0.0, openingBalance ?? 0.0, openingBalance ?? 0.0]
   );
 
   return findById(result.insertId);
 }
 
-async function update(id, { name, phone, email, address, state, creditLimit }) {
+async function update(id, { name, phone, email, address, state, creditLimit, openingBalance }) {
   const fields = [];
   const params = [];
 
@@ -133,6 +133,13 @@ async function update(id, { name, phone, email, address, state, creditLimit }) {
   if (creditLimit !== undefined) {
     fields.push('credit_limit = ?');
     params.push(creditLimit);
+  }
+
+  if (openingBalance !== undefined) {
+    fields.push('opening_balance = ?');
+    params.push(openingBalance ?? 0);
+    fields.push('current_balance = ?');
+    params.push(openingBalance ?? 0);
   }
 
   if (fields.length === 0) {

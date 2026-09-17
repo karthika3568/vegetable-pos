@@ -40,6 +40,11 @@ const create = [
     .optional({ nullable: true })
     .isFloat({ min: 0 })
     .withMessage('creditLimit must be a non-negative number'),
+
+  body('openingBalance')
+    .optional({ nullable: true })
+    .isFloat({ min: 0 })
+    .withMessage('openingBalance must be a non-negative number'),
 ];
 
 const update = [
@@ -87,6 +92,11 @@ const update = [
     .optional({ nullable: true })
     .isFloat({ min: 0 })
     .withMessage('creditLimit must be a non-negative number'),
+
+  body('openingBalance')
+    .optional({ nullable: true })
+    .isFloat({ min: 0 })
+    .withMessage('openingBalance must be a non-negative number'),
 ];
 
 const setStatus = [

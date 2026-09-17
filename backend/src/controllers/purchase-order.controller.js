@@ -43,7 +43,6 @@ const create = asyncHandler(async (req, res) => {
     items: (req.body.items || []).map((item) => ({
       productId: Number(item.productId),
       orderedQuantity: Number(item.orderedQuantity),
-      expectedPrice: Number(item.expectedPrice),
     })),
     createdBy: req.user.id,
   });
@@ -66,7 +65,6 @@ const update = asyncHandler(async (req, res) => {
         ? req.body.items.map((item) => ({
             productId: Number(item.productId),
             orderedQuantity: Number(item.orderedQuantity),
-            expectedPrice: Number(item.expectedPrice),
           }))
         : undefined,
       createdBy: req.user.id,
@@ -94,7 +92,6 @@ const receive = asyncHandler(async (req, res) => {
         purchaseOrderItemId: Number(line.purchaseOrderItemId),
         receivedQuantity: Number(line.receivedQuantity),
         damagedQuantity: Number(line.damagedQuantity || 0),
-        purchasePrice: line.purchasePrice != null ? Number(line.purchasePrice) : null,
       })),
       createdBy: req.user.id,
     }

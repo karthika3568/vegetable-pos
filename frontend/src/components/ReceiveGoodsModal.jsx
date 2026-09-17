@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useToast } from '../context/ToastContext.jsx';
 import { purchaseOrderService } from '../services/purchase-order.service.js';
-import { formatMoney, formatQuantity } from '../utils/format.js';
+import { formatQuantity } from '../utils/format.js';
 import Modal from './Modal.jsx';
 
 export default function ReceiveGoodsModal({ po, onClose, onReceived }) {
@@ -13,10 +13,10 @@ export default function ReceiveGoodsModal({ po, onClose, onReceived }) {
       productName: item.product_name,
       productCode: item.product_code,
       unit: item.unit,
+      ordered: Number(item.ordered_quantity),
       remaining: Number(item.remaining_quantity),
       received: '',
       damaged: '',
-      price: String(item.expected_price),
     }))
   );
   const [submitting, setSubmitting] = useState(false);
@@ -31,12 +31,10 @@ export default function ReceiveGoodsModal({ po, onClose, onReceived }) {
   const totals = lines.reduce((acc, line) => {
     const received = Number(line.received) || 0;
     const damaged = Number(line.damaged) || 0;
-    const price = Number(line.price);
     acc.received += received;
     acc.damaged += damaged;
-    acc.amount += Number.isFinite(received) && Number.isFinite(price) ? received * price : 0;
     return acc;
-  }, { received: 0, damaged: 0, amount: 0 });
+  }, { received: 0, damaged: 0 });
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -76,7 +74,6 @@ export default function ReceiveGoodsModal({ po, onClose, onReceived }) {
           purchaseOrderItemId: line.itemId,
           receivedQuantity: Number(line.received) || 0,
           damagedQuantity: Number(line.damaged) || 0,
-          purchasePrice: line.price !== '' ? Number(line.price) : null,
         })),
       });
       onReceived(saved);
@@ -93,11 +90,11 @@ export default function ReceiveGoodsModal({ po, onClose, onReceived }) {
       <form className="form" onSubmit={handleSubmit} noValidate>
         <div className="receive-grid-head">
           <span className="receive-grid-head-label">Product</span>
+          <span>Ordered</span>
           <span>This receipt — received</span>
           <span>This receipt — damaged</span>
-          <span>Unit price</span>
+          <span>Unit</span>
           <span>Outstanding</span>
-          <span>Line total</span>
         </div>
         {lines.map((line, index) => (
           <div className="receive-grid-row" key={line.itemId}>
@@ -107,6 +104,7 @@ export default function ReceiveGoodsModal({ po, onClose, onReceived }) {
                 {line.productCode ? `${line.productCode} · remaining ${formatQuantity(line.remaining)} ${line.unit || ''}` : `remaining ${formatQuantity(line.remaining)} ${line.unit || ''}`}
               </span>
             </div>
+            <span className="receive-remaining">{formatQuantity(line.ordered)}{line.unit ? ` ${line.unit}` : ''}</span>
             <input
               aria-label={`Received quantity for ${line.productName}`}
               type="number"
@@ -127,19 +125,8 @@ export default function ReceiveGoodsModal({ po, onClose, onReceived }) {
               onChange={(event) => updateLine(index, { damaged: event.target.value })}
               disabled={submitting}
             />
-            <input
-              aria-label={`Unit price for ${line.productName}`}
-              type="number"
-              min="0"
-              step="0.01"
-              value={line.price}
-              onChange={(event) => updateLine(index, { price: event.target.value })}
-              disabled={submitting}
-            />
+            <span className="receive-remaining">{line.unit || '—'}</span>
             <span className="receive-remaining">{formatQuantity(line.remaining)}{line.unit ? ` ${line.unit}` : ''}</span>
-            <span className="receive-line-total">
-              {formatMoney((Number(line.received) || 0) * (Number(line.price) || 0))}
-            </span>
           </div>
         ))}
 
@@ -152,14 +139,11 @@ export default function ReceiveGoodsModal({ po, onClose, onReceived }) {
             <span>Damaged (not stocked)</span>
             <strong>{formatQuantity(totals.damaged)}</strong>
           </div>
-          <div className="receive-total-item">
-            <span>Goods value</span>
-            <strong>{formatMoney(totals.amount)}</strong>
-          </div>
         </div>
 
         <p className="field-hint">
           Stock increases only by the received (good) quantity. Damaged quantities are recorded but never added to stock.
+          Prices are entered later from the supplier&apos;s actual bill.
         </p>
 
         {error ? <div className="form-alert" role="alert">{error}</div> : null}

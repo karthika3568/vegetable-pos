@@ -170,9 +170,11 @@ CREATE TABLE suppliers (
     phone           VARCHAR(20)  NULL,
     email           VARCHAR(100) NULL,
     address         VARCHAR(255) NULL,
+    opening_balance DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     status          ENUM('active','inactive') NOT NULL DEFAULT 'active',
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT chk_suppliers_opening_balance CHECK (opening_balance >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_suppliers_phone ON suppliers(phone);
@@ -193,12 +195,14 @@ CREATE TABLE customers (
     phone           VARCHAR(20)  NULL,
     email           VARCHAR(100) NULL,
     address         VARCHAR(255) NULL,
+    opening_balance DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     credit_limit    DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     current_balance DECIMAL(12,2) NOT NULL DEFAULT 0.00, -- outstanding credit owed to shop
     status          ENUM('active','inactive') NOT NULL DEFAULT 'active',
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT uq_customers_phone UNIQUE (phone),
+    CONSTRAINT chk_customers_opening_balance CHECK (opening_balance >= 0),
     CONSTRAINT chk_customers_balance CHECK (current_balance >= 0),
     CONSTRAINT chk_customers_credit_limit CHECK (credit_limit >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -544,6 +548,7 @@ CREATE TABLE payments (
     sale_id             INT UNSIGNED NULL,
     purchase_id         INT UNSIGNED NULL,
     customer_id         INT UNSIGNED NULL,
+    supplier_id         INT UNSIGNED NULL,
     amount              DECIMAL(12,2) NOT NULL,
     payment_method      ENUM('cash','card','upi','bank_transfer','other') NOT NULL DEFAULT 'cash',
     payment_type        ENUM('sale_payment','credit_payment','purchase_payment') NOT NULL,
@@ -556,21 +561,25 @@ CREATE TABLE payments (
        ON UPDATE RESTRICT ON DELETE RESTRICT,
     CONSTRAINT fk_payments_purchase FOREIGN KEY (purchase_id) REFERENCES purchases(id)
        ON UPDATE RESTRICT ON DELETE RESTRICT,
-   CONSTRAINT fk_payments_reversed FOREIGN KEY (reversed_payment_id) REFERENCES payments(id)
+    CONSTRAINT fk_payments_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+       ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT fk_payments_reversed FOREIGN KEY (reversed_payment_id) REFERENCES payments(id)
        ON UPDATE CASCADE ON DELETE SET NULL,
     CONSTRAINT fk_payments_received_by FOREIGN KEY (received_by) REFERENCES users(id)
         ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT chk_payments_amount CHECK (amount <> 0),
     CONSTRAINT chk_payments_one_target CHECK (
-        (sale_id IS NOT NULL AND purchase_id IS NULL) OR
-        (sale_id IS NULL AND purchase_id IS NOT NULL) OR
-        (sale_id IS NULL AND purchase_id IS NULL AND customer_id IS NOT NULL)
+        (sale_id IS NOT NULL AND purchase_id IS NULL AND customer_id IS NULL AND supplier_id IS NULL) OR
+        (sale_id IS NULL AND purchase_id IS NOT NULL AND customer_id IS NULL) OR
+        (sale_id IS NULL AND purchase_id IS NULL AND customer_id IS NOT NULL AND supplier_id IS NULL) OR
+        (sale_id IS NULL AND purchase_id IS NULL AND customer_id IS NULL AND supplier_id IS NOT NULL)
     )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_payments_sale ON payments(sale_id);
 CREATE INDEX idx_payments_purchase ON payments(purchase_id);
 CREATE INDEX idx_payments_customer ON payments(customer_id);
+CREATE INDEX idx_payments_supplier ON payments(supplier_id);
 CREATE INDEX idx_payments_date ON payments(payment_date);
 
 -- =====================================================================

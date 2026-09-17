@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useToast } from '../context/ToastContext.jsx';
 import { useAsync } from '../hooks/useAsync.js';
 import { supplierService, SUPPLIER_STATUS_OPTIONS } from '../services/supplier.service.js';
@@ -7,7 +7,7 @@ import ErrorState from '../components/ErrorState.jsx';
 import EmptyState from '../components/EmptyState.jsx';
 import Pagination from '../components/Pagination.jsx';
 import Modal from '../components/Modal.jsx';
-import { formatDateTime } from '../utils/format.js';
+import { formatDateTime, formatMoney } from '../utils/format.js';
 import ActionButton from '../components/ActionButton.jsx';
 
 const LIMIT = 20;
@@ -35,6 +35,9 @@ function SupplierFormModal({ initial, onClose, onSubmit }) {
   const [phone, setPhone] = useState(initial ? (initial.phone ?? '') : '');
   const [email, setEmail] = useState(initial ? (initial.email ?? '') : '');
   const [address, setAddress] = useState(initial ? (initial.address ?? '') : '');
+  const [openingBalance, setOpeningBalance] = useState(
+    initial ? (initial.opening_balance != null ? String(initial.opening_balance) : '') : ''
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -80,6 +83,12 @@ function SupplierFormModal({ initial, onClose, onSubmit }) {
       return;
     }
 
+    const openingBalanceValue = openingBalance.trim() === '' ? undefined : Number(openingBalance);
+    if (openingBalanceValue !== undefined && (!Number.isFinite(openingBalanceValue) || openingBalanceValue < 0)) {
+      setError('Opening balance must be a non-negative number.');
+      return;
+    }
+
     setSubmitting(true);
     try {
       await onSubmit({
@@ -88,6 +97,7 @@ function SupplierFormModal({ initial, onClose, onSubmit }) {
         phone: trimmedPhone || null,
         email: trimmedEmail || null,
         address: trimmedAddress || null,
+        openingBalance: openingBalanceValue,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The request could not be completed.');
@@ -150,24 +160,41 @@ function SupplierFormModal({ initial, onClose, onSubmit }) {
             maxLength={100}
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            placeholder="e.g. produce@farmfresh.example"
+            placeholder="e.g. supplier@example.com"
             disabled={submitting}
           />
-          <p className="field-hint">Optional. Up to 100 characters, must be a valid email address.</p>
         </div>
 
         <div className="form-field">
           <label htmlFor="supplierAddress">Address</label>
-          <textarea
+          <input
             id="supplierAddress"
             name="address"
-            rows="3"
+            type="text"
             maxLength={255}
             value={address}
             onChange={(event) => setAddress(event.target.value)}
-            placeholder="Optional street / area address"
+            placeholder="e.g. 123 Mandi Road, Market Yard"
             disabled={submitting}
           />
+        </div>
+
+        <div className="form-field">
+          <label htmlFor="supplierOpeningBalance">Opening Balance (₹)</label>
+          <input
+            id="supplierOpeningBalance"
+            name="openingBalance"
+            type="number"
+            min="0"
+            step="0.01"
+            value={openingBalance}
+            onChange={(event) => setOpeningBalance(event.target.value)}
+            placeholder="0.00"
+            disabled={submitting}
+          />
+          <p className="field-hint">
+            Optional. Amount already owed to this supplier before the POS was started. This is NOT a purchase order, purchase, or stock receiving.
+          </p>
         </div>
 
         {error ? (
@@ -189,7 +216,168 @@ function SupplierFormModal({ initial, onClose, onSubmit }) {
   );
 }
 
-function SupplierDetailModal({ supplier, onClose }) {
+function SupplierPaymentModal({ supplier, onClose, onSubmit }) {
+  const payable = Number(supplier.current_payable_balance ?? 0);
+  const [amount, setAmount] = useState('');
+  const [method, setMethod] = useState('cash');
+  const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError('');
+
+    const val = Number(amount);
+    if (!Number.isFinite(val) || val <= 0) {
+      setError('Amount must be greater than zero.');
+      return;
+    }
+    if (val > payable) {
+      setError(`Amount cannot exceed the current payable balance of ${formatMoney(payable)}.`);
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await onSubmit({
+        amount: val,
+        method,
+        paymentDate: paymentDate || undefined,
+        notes: notes.trim() || undefined,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not record the payment.');
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal title={`Record Supplier Payment - ${supplier.name}`} onClose={onClose}>
+      <form className="form" onSubmit={handleSubmit} noValidate>
+        <div className="summary-grid" style={{ marginBottom: 16 }}>
+          <div className="summary-item">
+            <span className="summary-label">Opening Balance</span>
+            <span className="summary-value">{formatMoney(supplier.opening_balance ?? 0)}</span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">Current Payable</span>
+            <span
+              className="summary-value"
+              style={{ color: 'var(--color-danger)', fontWeight: 700 }}
+            >
+              {formatMoney(payable)}
+            </span>
+          </div>
+        </div>
+
+        <div className="form-field">
+          <label htmlFor="supplierPaymentAmount">Payment Amount</label>
+          <input
+            id="supplierPaymentAmount"
+            name="amount"
+            type="number"
+            min="0.01"
+            max={payable}
+            step="0.01"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="0.00"
+            disabled={submitting || payable <= 0}
+            required
+          />
+          <p className="field-hint">
+            Must be greater than zero and at most {formatMoney(payable)} (backend enforces this too).
+          </p>
+        </div>
+
+        <div className="form-field">
+          <label htmlFor="supplierPaymentMethod">Payment Method</label>
+          <select
+            id="supplierPaymentMethod"
+            name="method"
+            value={method}
+            onChange={(e) => setMethod(e.target.value)}
+            disabled={submitting}
+          >
+            <option value="cash">Cash</option>
+            <option value="upi">UPI</option>
+            <option value="card">Card</option>
+            <option value="bank_transfer">Bank Transfer</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+
+        <div className="form-field">
+          <label htmlFor="supplierPaymentDate">Payment Date</label>
+          <input
+            id="supplierPaymentDate"
+            name="paymentDate"
+            type="date"
+            value={paymentDate}
+            onChange={(e) => setPaymentDate(e.target.value)}
+            disabled={submitting}
+          />
+        </div>
+
+        <div className="form-field">
+          <label htmlFor="supplierPaymentNotes">Reference / Note</label>
+          <input
+            id="supplierPaymentNotes"
+            name="notes"
+            type="text"
+            maxLength={255}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Optional transaction reference"
+            disabled={submitting}
+          />
+        </div>
+
+        {error ? (
+          <div className="form-alert" role="alert">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="form-actions">
+          <button type="button" className="btn btn-outline" onClick={onClose} disabled={submitting}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-primary" disabled={submitting || payable <= 0}>
+            {submitting ? 'Saving…' : 'Save Payment'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function SupplierDetailModal({ supplier, onClose, onRecordPaymentClick }) {
+  const [payments, setPayments] = useState([]);
+  const [loadingPayments, setLoadingPayments] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    supplierService
+      .getPayments(supplier.id)
+      .then((data) => {
+        if (active) setPayments(data);
+      })
+      .catch(() => {
+        if (active) setPayments([]);
+      })
+      .finally(() => {
+        if (active) setLoadingPayments(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [supplier.id]);
+
+  const payable = Number(supplier.current_payable_balance ?? 0);
+
   return (
     <Modal title="Supplier Details" onClose={onClose}>
       <div className="summary-grid" style={{ marginBottom: 16 }}>
@@ -215,19 +403,105 @@ function SupplierDetailModal({ supplier, onClose }) {
             <StatusBadge status={supplier.status} />
           </span>
         </div>
-        <div className="summary-item" style={{ gridColumn: '1 / -1' }}>
-          <span className="summary-label">Address</span>
-          <span className="summary-value">{supplier.address || '—'}</span>
-        </div>
         <div className="summary-item">
           <span className="summary-label">Created</span>
           <span className="summary-value">{formatDateTime(supplier.created_at)}</span>
         </div>
-        <div className="summary-item">
-          <span className="summary-label">Last Updated</span>
-          <span className="summary-value">{formatDateTime(supplier.updated_at)}</span>
+        <div className="summary-item" style={{ gridColumn: '1 / -1' }}>
+          <span className="summary-label">Address</span>
+          <span className="summary-value">{supplier.address || '—'}</span>
         </div>
       </div>
+
+      <div className="detail-card" style={{ marginBottom: 16 }}>
+        <div
+          className="card-heading"
+          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}
+        >
+          <h3 className="card-title" style={{ margin: 0 }}>Payable Balance Breakdown</h3>
+          {payable > 0 && onRecordPaymentClick ? (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={onRecordPaymentClick}
+            >
+              Record Payment
+            </button>
+          ) : null}
+        </div>
+        <div className="summary-grid">
+          <div className="summary-item">
+            <span className="summary-label">Opening Balance</span>
+            <span className="summary-value">{formatMoney(supplier.opening_balance ?? 0)}</span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">Purchases / Payables</span>
+            <span className="summary-value">{formatMoney(supplier.total_purchases ?? 0)}</span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">Payments Made</span>
+            <span className="summary-value" style={{ color: 'var(--color-success)', fontWeight: 600 }}>
+              {formatMoney(supplier.total_payments ?? 0)}
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">Current Payable Balance</span>
+            <span
+              className="summary-value"
+              style={{
+                color: payable > 0 ? 'var(--color-danger)' : undefined,
+                fontWeight: 700,
+              }}
+            >
+              {formatMoney(payable)}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="detail-card" style={{ marginBottom: 16 }}>
+        <div className="card-heading" style={{ marginBottom: 8 }}>
+          <h3 className="card-title" style={{ margin: 0 }}>
+            Payment History ({payments.length})
+          </h3>
+        </div>
+        {loadingPayments ? (
+          <p style={{ color: 'var(--color-text-muted)', fontSize: 13, margin: '8px 0' }}>Loading payments…</p>
+        ) : payments.length > 0 ? (
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Method</th>
+                  <th className="num">Amount</th>
+                  <th>Reference / Note</th>
+                  <th>Received By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payments.map((p) => (
+                  <tr key={p.id}>
+                    <td>{formatDateTime(p.paymentDate)}</td>
+                    <td style={{ textTransform: 'uppercase' }}>{p.paymentMethod}</td>
+                    <td className="num">{formatMoney(p.amount)}</td>
+                    <td>
+                      {p.invoiceNumber ? `Invoice: ${p.invoiceNumber}` : 'Direct Supplier Payment'}
+                      {p.notes ? ` — ${p.notes}` : ''}
+                    </td>
+                    <td>{p.receivedByName || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p style={{ color: 'var(--color-text-muted)', fontSize: 13, margin: '8px 0' }}>
+            No payments recorded yet for this supplier.
+          </p>
+        )}
+      </div>
+
       <div className="form-actions">
         <button type="button" className="btn btn-outline" onClick={onClose}>
           Close
@@ -245,6 +519,7 @@ export default function SuppliersPage() {
 
   const [formState, setFormState] = useState(null);
   const [detail, setDetail] = useState(null);
+  const [payingSupplier, setPayingSupplier] = useState(null);
 
   const { showToast } = useToast();
 
@@ -318,6 +593,18 @@ export default function SuppliersPage() {
     }
   }
 
+  async function handleRecordPaymentSubmit(payload) {
+    if (!payingSupplier) return;
+    await supplierService.recordPayment(payingSupplier.id, payload);
+    showNotice('Supplier payment recorded.');
+    const updated = await supplierService.get(payingSupplier.id);
+    if (detail && detail.id === payingSupplier.id) {
+      setDetail(updated);
+    }
+    setPayingSupplier(null);
+    list.refetch();
+  }
+
   const pagination = list.data?.pagination ?? null;
   const items = list.data?.items ?? [];
   const hasFilters = Boolean(search || status);
@@ -327,8 +614,7 @@ export default function SuppliersPage() {
       <div className="page-heading">
         <h1 className="page-title">Suppliers</h1>
         <p className="page-intro">
-          Supplier master data used by purchases. Names are unique; suppliers are deactivated rather than deleted so
-          historical purchases keep resolving.
+          Supplier master data and balance management. Track opening balance, purchases, and recorded payments.
         </p>
       </div>
 
@@ -404,6 +690,10 @@ export default function SuppliersPage() {
                 <tr>
                   <th>Supplier</th>
                   <th>Address</th>
+                  <th>Opening Balance</th>
+                  <th>Purchases</th>
+                  <th>Payments</th>
+                  <th>Current Payable</th>
                   <th>Status</th>
                   <th>Created</th>
                   <th className="actions-col">Actions</th>
@@ -417,6 +707,19 @@ export default function SuppliersPage() {
                       <span className="cell-sub">{contactLine(record)}</span>
                     </td>
                     <td>{record.address || '—'}</td>
+                    <td>{formatMoney(record.opening_balance ?? 0)}</td>
+                    <td>{formatMoney(record.total_purchases ?? 0)}</td>
+                    <td style={{ color: 'var(--color-success)', fontWeight: 500 }}>
+                      {formatMoney(record.total_payments ?? 0)}
+                    </td>
+                    <td
+                      style={{
+                        fontWeight: 700,
+                        color: Number(record.current_payable_balance) > 0 ? 'var(--color-danger)' : undefined,
+                      }}
+                    >
+                      {formatMoney(record.current_payable_balance ?? record.opening_balance ?? 0)}
+                    </td>
                     <td>
                       <StatusBadge status={record.status} />
                     </td>
@@ -425,7 +728,20 @@ export default function SuppliersPage() {
                       <div className="table-actions">
                         <ActionButton action="view" onClick={() => handleView(record)} />
                         <ActionButton action="edit" onClick={() => setFormState({ mode: 'edit', record })} />
-                        <ActionButton action={record.status === 'active' ? 'deactivate' : 'activate'} onClick={() => handleToggleStatus(record)}>
+                        {Number(record.current_payable_balance) > 0 ? (
+                          <button
+                            type="button"
+                            className="btn btn-outline btn-sm"
+                            onClick={() => setPayingSupplier(record)}
+                            title="Record Payment"
+                          >
+                            Pay
+                          </button>
+                        ) : null}
+                        <ActionButton
+                          action={record.status === 'active' ? 'deactivate' : 'activate'}
+                          onClick={() => handleToggleStatus(record)}
+                        >
                           {record.status === 'active' ? 'Deactivate' : 'Activate'}
                         </ActionButton>
                       </div>
@@ -448,7 +764,21 @@ export default function SuppliersPage() {
         />
       ) : null}
 
-      {detail ? <SupplierDetailModal supplier={detail} onClose={closeDetail} /> : null}
+      {detail ? (
+        <SupplierDetailModal
+          supplier={detail}
+          onClose={closeDetail}
+          onRecordPaymentClick={Number(detail.current_payable_balance) > 0 ? () => setPayingSupplier(detail) : null}
+        />
+      ) : null}
+
+      {payingSupplier ? (
+        <SupplierPaymentModal
+          supplier={payingSupplier}
+          onClose={() => setPayingSupplier(null)}
+          onSubmit={handleRecordPaymentSubmit}
+        />
+      ) : null}
     </div>
   );
 }

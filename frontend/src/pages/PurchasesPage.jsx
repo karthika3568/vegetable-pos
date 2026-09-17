@@ -1,10 +1,11 @@
 import { useState, useCallback } from 'react';
 import { useAsync } from '../hooks/useAsync.js';
-import { purchaseService } from '../services/purchase.service.js';
+import { purchaseService, PURCHASE_PAYMENT_METHOD_LABELS } from '../services/purchase.service.js';
 import { purchaseOrderService } from '../services/purchase-order.service.js';
-import PurchaseFormModal from '../components/PurchaseFormModal.jsx';
 import PurchaseOrderFormModal from '../components/PurchaseOrderFormModal.jsx';
 import PurchaseOrderDetailModal, { PurchaseOrderStatusBadge } from '../components/PurchaseOrderDetailModal.jsx';
+import ActualPurchaseAmountModal from '../components/ActualPurchaseAmountModal.jsx';
+import SupplierPaymentModal from '../components/SupplierPaymentModal.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import PageLoader from '../components/PageLoader.jsx';
@@ -14,7 +15,7 @@ import Pagination from '../components/Pagination.jsx';
 import Modal from '../components/Modal.jsx';
 import Spinner from '../components/Spinner.jsx';
 import ActionButton from '../components/ActionButton.jsx';
-import { formatMoney, formatQuantity, formatDateOnly } from '../utils/format.js';
+import { formatMoney, formatQuantity, formatDateOnly, formatDateTime } from '../utils/format.js';
 import { imageUrl } from '../utils/imageUrl.js';
 
 const LIMIT = 20;
@@ -26,7 +27,7 @@ const STATUS_LABELS = {
 
 const PAYMENT_STATUS_LABELS = {
   unpaid: 'Unpaid',
-  partial: 'Partial',
+  partial: 'Partially Paid',
   paid: 'Paid',
 };
 
@@ -81,29 +82,32 @@ export default function PurchasesPage() {
   // --- Purchase History tab
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+  const [historyType, setHistoryType] = useState('');
   const [status, setStatus] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [page, setPage] = useState(1);
 
-  const purchasesList = useAsync(
+  const historyList = useAsync(
     () =>
-      purchaseService.listPurchases({
+      purchaseService.listHistory({
         search: search || undefined,
+        type: historyType || undefined,
         status: status || undefined,
         fromDate: fromDate || undefined,
         toDate: toDate || undefined,
         page,
         limit: LIMIT,
       }),
-    [search, status, fromDate, toDate, page, refreshKey]
+    [search, historyType, status, fromDate, toDate, page, refreshKey]
   );
 
   // --- Details
   const [detailId, setDetailId] = useState(null);
   const [poDetailId, setPoDetailId] = useState(null);
   const [createPoOpen, setCreatePoOpen] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [recordPaymentOpen, setRecordPaymentOpen] = useState(false);
+  const [actualAmountOpen, setActualAmountOpen] = useState(false);
   const [viewingInvoice, setViewingInvoice] = useState(null);
 
   const purchaseDetail = useAsync(
@@ -111,11 +115,20 @@ export default function PurchasesPage() {
     [detailId]
   );
 
+  const paymentsList = useAsync(
+    () => (detailId ? purchaseService.getPayments(detailId) : Promise.resolve([])),
+    [detailId, refreshKey]
+  );
+
   const poPagination = poList.data?.pagination ?? null;
   const poItems = poList.data?.items ?? [];
 
-  const pagination = purchasesList.data?.pagination ?? null;
-  const items = purchasesList.data?.items ?? [];
+  const pagination = historyList.data?.pagination ?? null;
+  const items = historyList.data?.items ?? [];
+
+  const paymentsListData = paymentsList.data ?? [];
+  const paymentsItems = Array.isArray(paymentsListData) ? paymentsListData : [];
+  const paymentsLoading = paymentsList.loading && !Array.isArray(paymentsList.data);
 
   function refreshAll() {
     setRefreshKey((key) => key + 1);
@@ -160,9 +173,15 @@ export default function PurchasesPage() {
   function handleReset() {
     setSearchInput('');
     setSearch('');
+    setHistoryType('');
     setStatus('');
     setFromDate('');
     setToDate('');
+    setPage(1);
+  }
+
+  function handleHistoryTypeFilter(event) {
+    setHistoryType(event.target.value);
     setPage(1);
   }
 
@@ -194,7 +213,7 @@ export default function PurchasesPage() {
   const closePoDetail = useCallback(() => setPoDetailId(null), []);
 
   const poHasFilters = Boolean(poSearch || poStatus || poFromDate || poToDate);
-  const hasFilters = Boolean(search || status || fromDate || toDate);
+  const hasFilters = Boolean(search || historyType || status || fromDate || toDate);
   const detail = purchaseDetail.data;
 
   return (
@@ -202,16 +221,12 @@ export default function PurchasesPage() {
       <div className="page-heading">
         <h1 className="page-title">Purchases</h1>
         <p className="page-intro">Raise purchase orders, receive goods and track purchase history.</p>
-        {hasPermission('purchases.create') ? (
-          tab === 'purchase-orders' ? (
+        {hasPermission('purchases.create') && tab === 'purchase-orders' ? (
+          <div className="heading-actions">
             <button type="button" className="btn btn-primary" onClick={() => setCreatePoOpen(true)}>
               New Purchase Order
             </button>
-          ) : (
-            <button type="button" className="btn btn-primary" onClick={() => setCreateOpen(true)}>
-              Add New Purchase
-            </button>
-          )
+          </div>
         ) : null}
       </div>
 
@@ -422,6 +437,14 @@ export default function PurchasesPage() {
 
             <div className="toolbar-actions">
               <label className="toolbar-select">
+                <span className="sr-only">Type filter</span>
+                <select value={historyType} onChange={handleHistoryTypeFilter}>
+                  <option value="">All</option>
+                  <option value="purchase">Purchase</option>
+                </select>
+              </label>
+
+              <label className="toolbar-select">
                 <span className="sr-only">Status filter</span>
                 <select value={status} onChange={handleStatusFilter}>
                   <option value="">All statuses</option>
@@ -452,20 +475,20 @@ export default function PurchasesPage() {
             </div>
           </div>
 
-          {purchasesList.loading && !purchasesList.data ? (
+          {historyList.loading && !historyList.data ? (
             <PageLoader label="Loading purchases…" />
           ) : null}
 
-          {purchasesList.error && !purchasesList.data ? (
+          {historyList.error && !historyList.data ? (
             <ErrorState
               title="Purchases unavailable"
-              message={purchasesList.error.message}
-              status={purchasesList.error.status}
-              onRetry={() => purchasesList.refetch()}
+              message={historyList.error.message}
+              status={historyList.error.status}
+              onRetry={() => historyList.refetch()}
             />
           ) : null}
 
-          {purchasesList.data && items.length === 0 ? (
+          {historyList.data && items.length === 0 ? (
             <EmptyState
               title={hasFilters ? 'No purchases match your filters' : 'No purchases found'}
               description={
@@ -476,20 +499,21 @@ export default function PurchasesPage() {
             />
           ) : null}
 
-          {purchasesList.data && items.length > 0 ? (
+          {historyList.data && items.length > 0 ? (
             <div className="table-card">
               <div className="table-tools">
                 <p className="table-count">
-                  {pagination?.total ?? 0} purchase{pagination?.total === 1 ? '' : 's'}
+                  {pagination?.total ?? 0} record{pagination?.total === 1 ? '' : 's'}
                 </p>
-                {purchasesList.loading ? <span className="table-refreshing">Refreshing…</span> : null}
+                {historyList.loading ? <span className="table-refreshing">Refreshing…</span> : null}
               </div>
 
               <div className="table-scroll">
                 <table className="data-table purchases-table">
                   <thead>
                     <tr>
-                      <th>Invoice</th>
+                      <th>Type</th>
+                      <th>Invoice / Reference</th>
                       <th>PO</th>
                       <th>Date</th>
                       <th>Supplier</th>
@@ -502,32 +526,38 @@ export default function PurchasesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((purchase) => (
-                      <tr key={purchase.id}>
-                        <td className="cell-main cell-code">{purchase.invoice_number}</td>
-                        <td>{purchase.po_number ? <span className="cell-code">{purchase.po_number}</span> : '—'}</td>
-                        <td>{formatDateOnly(purchase.purchase_date)}</td>
-                        <td>{purchase.supplier_name || '—'}</td>
-                        <td className="num">{formatMoney(purchase.total_amount)}</td>
-                        <td className="num">{formatMoney(purchase.paid_amount)}</td>
+                    {items.map((record) => (
+                      <tr key={`purchase-${record.id}`}>
+                        <td>
+                          <span className="badge badge-completed">Purchase</span>
+                        </td>
+                        <td className="cell-main cell-code">{record.reference}</td>
+                        <td>{record.poNumber ? <span className="cell-code">{record.poNumber}</span> : '—'}</td>
+                        <td>{formatDateOnly(record.date)}</td>
+                        <td>{record.supplierName || '—'}</td>
+                        <td className="num">{formatMoney(record.total)}</td>
+                        <td className="num">{formatMoney(record.paid)}</td>
                         <td className="num">
-                          {balanceDue(purchase) > 0 ? (
+                          {Number(record.balance) > 0 ? (
                             <span className="money" style={{ color: 'var(--color-danger)' }}>
-                              {formatMoney(balanceDue(purchase))}
+                              {formatMoney(record.balance)}
                             </span>
                           ) : (
                             formatMoney(0)
                           )}
                         </td>
                         <td>
-                          <PaymentStatusBadge status={purchase.payment_status} />
+                          <PaymentStatusBadge status={record.paymentStatus} />
                         </td>
                         <td>
-                          <StatusBadge status={purchase.status} />
+                          <StatusBadge status={record.status} />
                         </td>
                         <td className="actions-col">
                           <div className="table-actions">
-                            <ActionButton action="view" onClick={() => openDetail(purchase.id)} />
+                            <ActionButton
+                              action="view"
+                              onClick={() => openDetail(record.id)}
+                            />
                           </div>
                         </td>
                       </tr>
@@ -636,7 +666,33 @@ export default function PurchasesPage() {
                   ) : null}
 
                   <div className="detail-card">
-                    <h3 className="card-title">Totals</h3>
+                    <div className="card-heading">
+                      <h3 className="card-title">Totals</h3>
+                      {hasPermission('purchases.create') ? (
+                        <div className="table-actions">
+                          {Number(detail.total_amount) === 0 &&
+                          Number(detail.paid_amount) === 0 &&
+                          detail.status === 'completed' ? (
+                            <button
+                              type="button"
+                              className="btn btn-primary btn-sm"
+                              onClick={() => setActualAmountOpen(true)}
+                            >
+                              Record Actual Amount
+                            </button>
+                          ) : null}
+                          {balanceDue(detail) > 0 ? (
+                            <button
+                              type="button"
+                              className="btn btn-primary btn-sm"
+                              onClick={() => setRecordPaymentOpen(true)}
+                            >
+                              Record Payment
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
                     <div className="summary-grid">
                       <div className="summary-item">
                         <span className="summary-label">Total</span>
@@ -663,6 +719,75 @@ export default function PurchasesPage() {
                         </span>
                       </div>
                     </div>
+                  </div>
+
+                  <div className="detail-card">
+                    <div className="card-heading">
+                      <h3 className="card-title">Payment History</h3>
+                      <span className="card-caption">
+                        {paymentsItems.length} payment{paymentsItems.length === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    {paymentsLoading ? (
+                      <div style={{ display: 'flex', justifyContent: 'center', padding: '16px 0' }}>
+                        <Spinner label="Loading payment history…" />
+                      </div>
+                    ) : paymentsItems.length > 0 ? (
+                      <>
+                        <div className="table-scroll">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Date</th>
+                                <th>Method</th>
+                                <th className="num">Amount</th>
+                                <th>Reference / Note</th>
+                                <th>Received by</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {paymentsItems.map((payment) => (
+                                <tr key={payment.id}>
+                                  <td>{formatDateTime(payment.paymentDate)}</td>
+                                  <td>
+                                    {PURCHASE_PAYMENT_METHOD_LABELS[payment.paymentMethod] ||
+                                      payment.paymentMethod ||
+                                      '—'}
+                                  </td>
+                                  <td className="num">{formatMoney(payment.amount)}</td>
+                                  <td>{payment.notes || '—'}</td>
+                                  <td>{payment.receivedByName || '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div className="summary-grid" style={{ marginTop: 12 }}>
+                          <div className="summary-item">
+                            <span className="summary-label">Total Paid</span>
+                            <span className="summary-value" style={{ color: 'var(--color-success)', fontWeight: 700 }}>
+                              {formatMoney(detail.paid_amount)}
+                            </span>
+                          </div>
+                          <div className="summary-item">
+                            <span className="summary-label">Balance</span>
+                            <span
+                              className="summary-value"
+                              style={{
+                                color: balanceDue(detail) > 0 ? 'var(--color-danger)' : undefined,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {formatMoney(balanceDue(detail))}
+                            </span>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <p style={{ margin: 0, fontSize: 14, color: 'var(--color-text-muted)' }}>
+                        No payments recorded yet.
+                      </p>
+                    )}
                   </div>
 
                   {detail.notes ? (
@@ -752,18 +877,36 @@ export default function PurchasesPage() {
               </div>
             </Modal>
           ) : null}
-
-          {createOpen ? (
-            <PurchaseFormModal
-              onClose={() => setCreateOpen(false)}
-              onCreated={(purchase) => {
-                setCreateOpen(false);
-                refreshAll();
-                showToast(`Purchase ${purchase?.invoice_number || ''} created successfully.`, 'success');
-              }}
-            />
-          ) : null}
         </>
+      ) : null}
+
+      {actualAmountOpen && detail ? (
+        <ActualPurchaseAmountModal
+          purchase={detail}
+          reference={detail.invoice_number}
+          items={detail.items}
+          onClose={() => setActualAmountOpen(false)}
+          onSaved={() => {
+            setActualAmountOpen(false);
+            refreshAll();
+            purchaseDetail.refetch();
+            showToast('Actual purchase amount recorded.', 'success');
+          }}
+        />
+      ) : null}
+
+      {recordPaymentOpen && detail ? (
+        <SupplierPaymentModal
+          purchase={detail}
+          onClose={() => setRecordPaymentOpen(false)}
+          onSubmit={async (body) => {
+            await purchaseService.recordPayment(detail.id, body);
+            setRecordPaymentOpen(false);
+            refreshAll();
+            purchaseDetail.refetch();
+            showToast('Supplier payment recorded.', 'success');
+          }}
+        />
       ) : null}
     </div>
   );

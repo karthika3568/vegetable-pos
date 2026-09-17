@@ -13,6 +13,10 @@ const supplierRepository = require('../repositories/supplier.repository');
 const auditService = require('./audit.service');
 const ApiError = require('../utils/ApiError');
 
+function toMoney(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
 async function list({ status, search, page = 1, limit = 20 }) {
   const offset = (page - 1) * limit;
 
@@ -44,13 +48,13 @@ async function getById(id) {
   return supplier;
 }
 
-async function create({ name, contactPerson, phone, email, address, actorId = null }) {
+async function create({ name, contactPerson, phone, email, address, openingBalance, actorId = null }) {
   const existing = await supplierRepository.findByName(name);
   if (existing) {
     throw ApiError.conflict(`Supplier "${name}" already exists`);
   }
 
-  const created = await supplierRepository.create({ name, contactPerson, phone, email, address });
+  const created = await supplierRepository.create({ name, contactPerson, phone, email, address, openingBalance });
 
   await auditService.log({
     userId: actorId,
@@ -63,7 +67,7 @@ async function create({ name, contactPerson, phone, email, address, actorId = nu
   return created;
 }
 
-async function update(id, { name, contactPerson, phone, email, address, actorId = null }) {
+async function update(id, { name, contactPerson, phone, email, address, openingBalance, actorId = null }) {
   const existing = await getById(id);
 
   if (name !== undefined && name !== existing.name) {
@@ -79,6 +83,7 @@ async function update(id, { name, contactPerson, phone, email, address, actorId 
     phone,
     email,
     address,
+    openingBalance,
   });
 
   await auditService.log({
@@ -110,10 +115,55 @@ async function setStatus(id, status, actorId = null) {
   return updated;
 }
 
+async function recordPayment({ supplierId, amount, method, paymentDate, notes, actorId = null }) {
+  await getById(supplierId);
+
+  const updated = await supplierRepository.recordPayment({
+    supplierId,
+    amount: toMoney(amount),
+    method,
+    paymentDate: paymentDate || new Date().toISOString().slice(0, 10),
+    notes,
+    receivedBy: actorId,
+  });
+
+  await auditService.log({
+    userId: actorId,
+    action: 'RECORD_SUPPLIER_PAYMENT',
+    entityType: 'suppliers',
+    entityId: supplierId,
+    newValues: { amount, method, paymentDate, notes },
+  });
+
+  return updated;
+}
+
+async function getPayments(supplierId) {
+  await getById(supplierId);
+
+  const rows = await supplierRepository.findPayments(supplierId);
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    purchaseId: row.purchase_id ? Number(row.purchase_id) : null,
+    invoiceNumber: row.invoice_number || null,
+    amount: toMoney(row.amount),
+    paymentMethod: row.payment_method,
+    paymentType: row.payment_type,
+    paymentDate: row.payment_date,
+    notes: row.notes,
+    receivedById: Number(row.received_by),
+    receivedByName: row.received_by_name,
+    createdAt: row.created_at,
+  }));
+}
+
 module.exports = {
   list,
   getById,
   create,
   update,
   setStatus,
+  recordPayment,
+  getPayments,
 };

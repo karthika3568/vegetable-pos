@@ -100,9 +100,100 @@ const setStatus = [
     .withMessage('status must be "completed" or "cancelled"'),
 ];
 
+const recordPayment = [
+  param('id')
+    .isInt({ min: 1 })
+    .withMessage('id must be a positive integer'),
+
+  body('amount')
+    .isFloat({ gt: 0 })
+    .withMessage('amount must be a positive number'),
+
+  body('method')
+    .isIn(['cash', 'card', 'upi', 'bank_transfer', 'other'])
+    .withMessage('method must be one of: cash, card, upi, bank_transfer, other'),
+
+  body('paymentDate')
+    .optional({ nullable: true })
+    .isISO8601()
+    .withMessage('paymentDate must be a valid date'),
+
+  body('notes')
+    .optional({ nullable: true })
+    .trim()
+    .isLength({ max: 255 })
+    .withMessage('notes must be at most 255 characters'),
+];
+
+const getPayments = [
+  param('id')
+    .isInt({ min: 1 })
+    .withMessage('id must be a positive integer'),
+];
+
+const setActualAmount = [
+  param('id')
+    .isInt({ min: 1 })
+    .withMessage('id must be a positive integer'),
+
+  body('items')
+    .isArray({ min: 1, max: 200 })
+    .withMessage('items must be a non-empty array of at most 200 items'),
+
+  body('items.*.productId')
+    .isInt({ min: 1 })
+    .withMessage('each item productId must be a positive integer'),
+
+  body('items.*.unitPrice')
+    .isFloat({ min: 0 })
+    .withMessage('each item unitPrice must be a non-negative number'),
+];
+
+const history = [
+  query('search')
+    .optional({ values: 'falsy' })
+    .trim()
+    .isLength({ max: 100 })
+    .withMessage('search must be at most 100 characters'),
+
+  query('type')
+    .optional({ values: 'falsy' })
+    .isIn(['purchase'])
+    .withMessage('type must be "purchase"'),
+
+  query('status')
+    .optional({ values: 'falsy' })
+    .isIn(['completed', 'cancelled'])
+    .withMessage('status must be "completed" or "cancelled"'),
+
+  query('fromDate')
+    .optional({ values: 'falsy' })
+    .isISO8601()
+    .withMessage('fromDate must be a valid date'),
+
+  query('toDate')
+    .optional({ values: 'falsy' })
+    .isISO8601()
+    .withMessage('toDate must be a valid date'),
+
+  query('page')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 1 })
+    .withMessage('page must be a positive integer'),
+
+  query('limit')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 1, max: 100 })
+    .withMessage('limit must be between 1 and 100'),
+];
+
 module.exports = {
   create,
   getById,
   list,
   setStatus,
+  recordPayment,
+  setActualAmount,
+  getPayments,
+  history,
 };

@@ -14,7 +14,10 @@
  *       1. locks the PO + its items FOR UPDATE (concurrent receives
  *          serialize),
  *       2. writes a `completed` purchases header (auto receipt number,
- *          payment_type 'credit', paid 0, purchase_order_id set),
+ *          paid 0, total 0, purchase_order_id set). The ACTUAL supplier
+ *          amount is recorded afterwards via
+ *          purchaseRepository.setActualAmount once the supplier bill is
+ *          known (a PO/receipt never carries an "expected" price),
  *       3. writes purchase_items for the RECEIVED (good) quantities only,
  *       4. reconciles stock via stockRepository.syncPurchaseStock
  *          (writes the stock_transactions ledger 'purchase' rows in
@@ -33,10 +36,6 @@ const ApiError = require('../utils/ApiError');
 function to3(value) {
   const n = Math.round((Number(value) + Number.EPSILON) * 1000) / 1000;
   return Object.is(n, -0) ? 0 : n;
-}
-
-function toMoney(value) {
-  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }
 
 function buildPoNumber(id) {
@@ -97,7 +96,6 @@ async function findById(id) {
        p.sku AS product_code,
        p.unit,
        poi.ordered_quantity,
-       poi.expected_price,
        poi.received_quantity,
        poi.damaged_quantity,
        (poi.ordered_quantity - poi.received_quantity - poi.damaged_quantity) AS remaining_quantity
@@ -258,9 +256,9 @@ async function create({
 
     for (const item of items) {
       await connection.query(
-        `INSERT INTO purchase_order_items (purchase_order_id, product_id, ordered_quantity, expected_price)
-         VALUES (?, ?, ?, ?)`,
-        [poId, item.productId, item.orderedQuantity, item.expectedPrice]
+        `INSERT INTO purchase_order_items (purchase_order_id, product_id, ordered_quantity)
+         VALUES (?, ?, ?)`,
+        [poId, item.productId, item.orderedQuantity]
       );
     }
 
@@ -339,9 +337,9 @@ async function update(id, { supplierId, orderDate, expectedDeliveryDate, notes, 
       );
       for (const item of items) {
         await connection.query(
-          `INSERT INTO purchase_order_items (purchase_order_id, product_id, ordered_quantity, expected_price)
-           VALUES (?, ?, ?, ?)`,
-          [id, item.productId, item.orderedQuantity, item.expectedPrice]
+          `INSERT INTO purchase_order_items (purchase_order_id, product_id, ordered_quantity)
+           VALUES (?, ?, ?)`,
+          [id, item.productId, item.orderedQuantity]
         );
       }
     }
@@ -425,14 +423,14 @@ async function receive(poId, { receiptDate, lines, createdBy }) {
       return null;
     }
 
-    if (po.status === 'draft' || po.status === 'cancelled' || po.status === 'received') {
+    if (po.status === 'cancelled' || po.status === 'received') {
       await connection.rollback();
       connection.release();
       throw ApiError.badRequest(`Purchase order ${po.po_number} cannot be received (status: ${po.status})`);
     }
 
     const [itemRows] = await connection.query(
-      `SELECT id, product_id, ordered_quantity, received_quantity, damaged_quantity, expected_price
+      `SELECT id, product_id, ordered_quantity, received_quantity, damaged_quantity
        FROM purchase_order_items
        WHERE purchase_order_id = ?
        FOR UPDATE`,
@@ -443,9 +441,7 @@ async function receive(poId, { receiptDate, lines, createdBy }) {
 
     const updates = [];
     const purchaseItems = [];
-    let totalAmount = 0;
     let anyReceived = false;
-    let hasOutstanding = false;
 
     for (const line of lines) {
       const row = itemMap.get(Number(line.itemId));
@@ -482,21 +478,16 @@ async function receive(poId, { receiptDate, lines, createdBy }) {
         continue;
       }
 
-      const price = toMoney(
-        line.purchasePrice != null && Number.isFinite(Number(line.purchasePrice))
-          ? line.purchasePrice
-          : row.expected_price
-      );
-
-      updates.push({ itemId: Number(row.id), received, damaged, price });
+      updates.push({ itemId: Number(row.id), received, damaged });
 
       if (received > 0) {
         anyReceived = true;
-        totalAmount = toMoney(totalAmount + received * price);
+        // Quantity is recorded now; the ACTUAL supplier price/total is
+        // entered after receiving (see purchaseRepository.setActualAmount).
         purchaseItems.push({
           productId: row.product_id,
           quantity: received,
-          purchasePrice: price,
+          purchasePrice: 0,
         });
       }
     }
@@ -538,7 +529,7 @@ async function receive(poId, { receiptDate, lines, createdBy }) {
         poId,
         receiptNumber,
         receiptDate,
-        totalAmount,
+        0,
         0,
         `Receipt for ${po.po_number}`.slice(0, 255),
         createdBy,

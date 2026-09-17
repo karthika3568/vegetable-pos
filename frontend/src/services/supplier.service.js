@@ -34,4 +34,14 @@ export const supplierService = {
     const payload = await api.patch(`/suppliers/${id}/status`, { status });
     return payload?.data ?? null;
   },
+
+  async recordPayment(id, input) {
+    const payload = await api.post(`/suppliers/${id}/payments`, input);
+    return payload?.data ?? null;
+  },
+
+  async getPayments(id) {
+    const payload = await api.get(`/suppliers/${id}/payments`);
+    return payload?.data ?? [];
+  },
 };

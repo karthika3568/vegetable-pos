@@ -67,9 +67,71 @@ const setStatus = asyncHandler(async (req, res) => {
   );
 });
 
+const recordPayment = asyncHandler(async (req, res) => {
+  const purchase = await purchaseService.recordPayment({
+    purchaseId: Number(req.params.id),
+    amount: Number(req.body.amount),
+    method: req.body.method,
+    paymentDate: req.body.paymentDate,
+    notes: req.body.notes,
+    receivedBy: req.user.id,
+  });
+
+  response.ok(res, purchase, 'Supplier payment recorded');
+});
+
+const getPayments = asyncHandler(async (req, res) => {
+  const payments = await purchaseService.getPayments(
+    Number(req.params.id)
+  );
+
+  response.ok(res, payments, 'Payment history retrieved');
+});
+
+const setActualAmount = asyncHandler(async (req, res) => {
+  const purchase = await purchaseService.setActualAmount({
+    purchaseId: Number(req.params.id),
+    items: (req.body.items || []).map((item) => ({
+      productId: Number(item.productId),
+      unitPrice: Number(item.unitPrice),
+    })),
+    createdBy: req.user.id,
+  });
+
+  response.ok(res, purchase, 'Actual purchase amount recorded');
+});
+
+const history = asyncHandler(async (req, res) => {
+  const {
+    search,
+    type,
+    status,
+    fromDate,
+    toDate,
+    page,
+    limit,
+  } = req.query;
+
+  const result = await purchaseService.listHistory({
+    search,
+    type,
+    status,
+    fromDate,
+    toDate,
+    page: page ? Number(page) : undefined,
+    limit: limit ? Number(limit) : undefined,
+  });
+
+  response.paginated(res, result.items, result.pagination);
+});
+
 module.exports = {
   list,
   getById,
   create,
   setStatus,
+  recordPayment,
+  setActualAmount,
+  getPayments,
+  history,
 };

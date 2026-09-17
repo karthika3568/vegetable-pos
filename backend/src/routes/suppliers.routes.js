@@ -12,5 +12,7 @@ router.get('/:id', supplierValidator.getById, validate, supplierController.getBy
 router.post('/', supplierValidator.create, validate, supplierController.create);
 router.put('/:id', supplierValidator.update, validate, supplierController.update);
 router.patch('/:id/status', supplierValidator.setStatus, validate, supplierController.setStatus);
+router.post('/:id/payments', supplierValidator.recordPayment, validate, supplierController.recordPayment);
+router.get('/:id/payments', supplierValidator.getById, validate, supplierController.getPayments);
 
 module.exports = router;

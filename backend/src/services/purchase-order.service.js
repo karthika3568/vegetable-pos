@@ -124,14 +124,9 @@ async function validateItems(items) {
 
   for (const item of items) {
     const orderedQuantity = to3(Number(item.orderedQuantity));
-    const expectedPrice = Number(item.expectedPrice);
 
     if (!Number.isFinite(orderedQuantity) || orderedQuantity <= 0) {
       throw ApiError.badRequest('each item orderedQuantity must be a positive number');
-    }
-
-    if (!Number.isFinite(expectedPrice) || expectedPrice < 0) {
-      throw ApiError.badRequest('each item expectedPrice must be a non-negative number');
     }
 
     const productId = Number(item.productId);
@@ -149,7 +144,6 @@ async function validateItems(items) {
     normalized.push({
       productId,
       orderedQuantity,
-      expectedPrice: Math.round((expectedPrice + Number.EPSILON) * 100) / 100,
     });
   }
 
@@ -226,10 +220,6 @@ async function send(id, createdBy) {
 async function receive(id, { receivedDate, items: lines, createdBy }) {
   const purchaseOrder = await getById(id);
 
-  if (purchaseOrder.status === 'draft') {
-    throw ApiError.badRequest('Send the purchase order before receiving goods');
-  }
-
   if (purchaseOrder.status === 'cancelled') {
     throw ApiError.badRequest(`Purchase order ${purchaseOrder.po_number} is cancelled and cannot be received`);
   }
@@ -253,9 +243,6 @@ async function receive(id, { receivedDate, items: lines, createdBy }) {
 
     const receivedQuantity = to3(Number(line.receivedQuantity));
     const damagedQuantity = to3(Number(line.damagedQuantity || 0));
-    const purchasePrice = line.purchasePrice != null && line.purchasePrice !== ''
-      ? Number(line.purchasePrice)
-      : null;
 
     if (!Number.isFinite(receivedQuantity) || receivedQuantity < 0) {
       throw ApiError.badRequest('each item receivedQuantity must be a non-negative number');
@@ -263,10 +250,6 @@ async function receive(id, { receivedDate, items: lines, createdBy }) {
 
     if (!Number.isFinite(damagedQuantity) || damagedQuantity < 0) {
       throw ApiError.badRequest('each item damagedQuantity must be a non-negative number');
-    }
-
-    if (purchasePrice != null && (!Number.isFinite(purchasePrice) || purchasePrice < 0)) {
-      throw ApiError.badRequest('each item purchasePrice must be a non-negative number');
     }
 
     const remaining = to3(Number(item.remaining_quantity));
@@ -284,7 +267,6 @@ async function receive(id, { receivedDate, items: lines, createdBy }) {
       itemId,
       receivedQuantity,
       damagedQuantity,
-      purchasePrice,
     });
   }
 

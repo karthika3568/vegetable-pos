@@ -4,7 +4,6 @@ import { useToast } from '../context/ToastContext.jsx';
 import { supplierService } from '../services/supplier.service.js';
 import { productService } from '../services/product.service.js';
 import { purchaseOrderService } from '../services/purchase-order.service.js';
-import { formatMoney } from '../utils/format.js';
 import Modal from './Modal.jsx';
 
 const toDateInput = (value) => String(value || '').slice(0, 10);
@@ -22,11 +21,10 @@ export default function PurchaseOrderFormModal({ initial = null, onClose, onSave
       return initial.items.map((item) => ({
         productId: String(item.product_id),
         orderedQuantity: String(item.ordered_quantity),
-        expectedPrice: String(item.expected_price),
         unit: item.unit || '',
       }));
     }
-    return [{ productId: '', orderedQuantity: '', expectedPrice: '', unit: '' }];
+    return [{ productId: '', orderedQuantity: '', unit: '' }];
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -45,15 +43,6 @@ export default function PurchaseOrderFormModal({ initial = null, onClose, onSave
   }, [suppliers.data, isEdit, initial]);
   const productItems = products.data?.items ?? [];
 
-  const totalExpected = useMemo(
-    () => items.reduce((sum, item) => {
-      const qty = Number(item.orderedQuantity);
-      const price = Number(item.expectedPrice);
-      return sum + (Number.isFinite(qty) && Number.isFinite(price) ? qty * price : 0);
-    }, 0),
-    [items]
-  );
-
   function updateItem(index, patch) {
     setItems((current) => current.map((item, itemIndex) => (
       itemIndex === index ? { ...item, ...patch } : item
@@ -64,7 +53,6 @@ export default function PurchaseOrderFormModal({ initial = null, onClose, onSave
     const product = productItems.find((item) => String(item.id) === String(value));
     updateItem(index, {
       productId: value,
-      expectedPrice: product ? String(product.purchasePrice) : '',
       unit: product?.unit || '',
     });
   }
@@ -76,7 +64,6 @@ export default function PurchaseOrderFormModal({ initial = null, onClose, onSave
     const validItems = items.map((item) => ({
       productId: Number(item.productId),
       orderedQuantity: Number(item.orderedQuantity),
-      expectedPrice: Number(item.expectedPrice),
     }));
 
     if (!supplierId || !orderDate) {
@@ -85,10 +72,9 @@ export default function PurchaseOrderFormModal({ initial = null, onClose, onSave
     }
     if (validItems.some((item) => (
       !Number.isInteger(item.productId) || item.productId < 1 ||
-      !Number.isFinite(item.orderedQuantity) || item.orderedQuantity <= 0 ||
-      !Number.isFinite(item.expectedPrice) || item.expectedPrice < 0
+      !Number.isFinite(item.orderedQuantity) || item.orderedQuantity <= 0
     ))) {
-      setError('Each item needs a product, a positive quantity and a valid price.');
+      setError('Each item needs a product and a positive quantity.');
       return;
     }
 
@@ -180,7 +166,7 @@ export default function PurchaseOrderFormModal({ initial = null, onClose, onSave
             <button
               type="button"
               className="btn btn-outline btn-sm"
-              onClick={() => setItems((current) => [...current, { productId: '', orderedQuantity: '', expectedPrice: '', unit: '' }])}
+              onClick={() => setItems((current) => [...current, { productId: '', orderedQuantity: '', unit: '' }])}
               disabled={submitting}
             >
               Add Item
@@ -215,16 +201,6 @@ export default function PurchaseOrderFormModal({ initial = null, onClose, onSave
                 readOnly
                 placeholder="Unit"
               />
-              <input
-                aria-label={`Expected price ${index + 1}`}
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="Price"
-                value={item.expectedPrice}
-                onChange={(event) => updateItem(index, { expectedPrice: event.target.value })}
-                disabled={submitting}
-              />
               <button
                 type="button"
                 className="icon-btn"
@@ -236,10 +212,6 @@ export default function PurchaseOrderFormModal({ initial = null, onClose, onSave
               </button>
             </div>
           ))}
-          <div className="purchase-form-total">
-            <span>Expected total</span>
-            <strong>{formatMoney(totalExpected)}</strong>
-          </div>
         </div>
 
         {suppliers.error || products.error ? <div className="form-alert" role="alert">Could not load suppliers or products.</div> : null}

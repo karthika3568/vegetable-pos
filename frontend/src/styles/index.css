@@ -1205,6 +1205,13 @@ a:focus-visible {
   margin-bottom: 18px;
 }
 
+.heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
 .purchase-form-items {
   display: flex;
   flex-direction: column;
@@ -1213,7 +1220,7 @@ a:focus-visible {
 
 .purchase-form-item {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(100px, 0.65fr) minmax(80px, 0.45fr) minmax(110px, 0.7fr) 40px;
+  grid-template-columns: minmax(0, 1.4fr) minmax(100px, 0.65fr) minmax(80px, 0.45fr) 40px;
   gap: 8px;
   align-items: center;
 }
@@ -2570,7 +2577,7 @@ a:focus-visible {
   }
 
   .purchase-form-item {
-    grid-template-columns: minmax(0, 1.35fr) minmax(80px, 0.75fr) minmax(64px, 0.55fr) minmax(90px, 0.8fr) 34px;
+    grid-template-columns: minmax(0, 1.35fr) minmax(80px, 0.75fr) minmax(64px, 0.55fr) 34px;
   }
 
   .attribute-grid {
@@ -5060,6 +5067,25 @@ a:focus-visible {
   margin-left: auto;
   font-weight: 700;
   color: var(--color-text);
+}
+
+.po-receipt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.actual-amount-input {
+  width: 130px;
+  height: 36px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-align: right;
 }
 
 /* Receive goods form */

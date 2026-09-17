@@ -40,4 +40,29 @@ const setStatus = asyncHandler(async (req, res) => {
   response.ok(res, supplier, 'Supplier status updated');
 });
 
-module.exports = { list, getById, create, update, setStatus };
+const recordPayment = asyncHandler(async (req, res) => {
+  const supplier = await supplierService.recordPayment({
+    supplierId: Number(req.params.id),
+    amount: Number(req.body.amount),
+    method: req.body.method,
+    paymentDate: req.body.paymentDate,
+    notes: req.body.notes,
+    actorId: req.user.id,
+  });
+  response.ok(res, supplier, 'Supplier payment recorded');
+});
+
+const getPayments = asyncHandler(async (req, res) => {
+  const payments = await supplierService.getPayments(Number(req.params.id));
+  response.ok(res, payments, 'Supplier payment history retrieved');
+});
+
+module.exports = {
+  list,
+  getById,
+  create,
+  update,
+  setStatus,
+  recordPayment,
+  getPayments,
+};

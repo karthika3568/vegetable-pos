@@ -40,6 +40,9 @@ function CustomerFormModal({ initial, onClose, onSubmit }) {
   const [creditLimit, setCreditLimit] = useState(
     initial ? (initial.credit_limit != null ? String(initial.credit_limit) : '') : ''
   );
+  const [openingBalance, setOpeningBalance] = useState(
+    initial ? (initial.current_balance != null ? String(initial.current_balance) : '') : ''
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -86,6 +89,13 @@ function CustomerFormModal({ initial, onClose, onSubmit }) {
       return;
     }
 
+    const openingBalanceValue =
+      openingBalance.trim() === '' ? undefined : Number(openingBalance);
+    if (openingBalanceValue !== undefined && (!Number.isFinite(openingBalanceValue) || openingBalanceValue < 0)) {
+      setError('Opening balance must be a non-negative number.');
+      return;
+    }
+
     setSubmitting(true);
     try {
       await onSubmit({
@@ -94,6 +104,7 @@ function CustomerFormModal({ initial, onClose, onSubmit }) {
         email: trimmedEmail || null,
         address: trimmedAddress || null,
         creditLimit: creditLimitValue,
+        openingBalance: openingBalanceValue,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The request could not be completed.');
@@ -181,6 +192,24 @@ function CustomerFormModal({ initial, onClose, onSubmit }) {
           </p>
         </div>
 
+        <div className="form-field">
+          <label htmlFor="customerOpeningBalance">Opening Balance</label>
+          <input
+            id="customerOpeningBalance"
+            name="openingBalance"
+            type="number"
+            min="0"
+            step="0.01"
+            value={openingBalance}
+            onChange={(event) => setOpeningBalance(event.target.value)}
+            placeholder="0.00"
+            disabled={submitting}
+          />
+          <p className="field-hint">
+            Optional. Amount already owed to the shop before using the POS. This sits in the existing customer credit balance.
+          </p>
+        </div>
+
         {editing && initial ? (
           <div className="pick-box">
             <div className="pick-box-main">Current Balance</div>
@@ -235,6 +264,13 @@ function CustomerDetailModal({ customer, onClose }) {
         <div className="summary-item" style={{ gridColumn: '1 / -1' }}>
           <span className="summary-label">Address</span>
           <span className="summary-value">{customer.address || '—'}</span>
+        </div>
+        <div className="summary-item">
+          <span className="summary-label">Opening Balance</span>
+          <span className="summary-value">
+            <MoneyCell value={customer.opening_balance ?? 0} />
+          </span>
+          <p className="field-hint">Receivable / Customer Credit before POS</p>
         </div>
         <div className="summary-item">
           <span className="summary-label">Credit Limit</span>
@@ -435,6 +471,7 @@ export default function CustomersPage() {
                 <tr>
                   <th>Customer</th>
                   <th>Address</th>
+                  <th className="num">Opening Balance</th>
                   <th className="num">Credit Limit</th>
                   <th className="num">Current Balance</th>
                   <th>Status</th>
@@ -450,6 +487,7 @@ export default function CustomersPage() {
                       <span className="cell-sub">{contactLine(record)}</span>
                     </td>
                     <td>{record.address || '—'}</td>
+                    <td className="num">{formatMoney(record.opening_balance ?? 0)}</td>
                     <td className="num">{formatMoney(record.credit_limit ?? 0)}</td>
                     <td className="num">
                       <MoneyCell value={record.current_balance ?? 0} tone={Number(record.current_balance) > 0 ? 'danger' : undefined} />

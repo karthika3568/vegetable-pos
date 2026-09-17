@@ -2,13 +2,17 @@ import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useAsync } from '../hooks/useAsync.js';
 import { useToast } from '../context/ToastContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 import { purchaseOrderService } from '../services/purchase-order.service.js';
+import { purchaseService } from '../services/purchase.service.js';
 import { formatMoney, formatQuantity, formatDateOnly } from '../utils/format.js';
 import Modal from './Modal.jsx';
 import Spinner from './Spinner.jsx';
 import ConfirmDialog from './ConfirmDialog.jsx';
 import ReceiveGoodsModal from './ReceiveGoodsModal.jsx';
 import PurchaseOrderFormModal from './PurchaseOrderFormModal.jsx';
+import ActualPurchaseAmountModal from './ActualPurchaseAmountModal.jsx';
+import SupplierPaymentModal from './SupplierPaymentModal.jsx';
 
 const STATUS_LABELS = {
   draft: 'Draft',
@@ -51,8 +55,6 @@ function PurchaseOrderSheet({ po }) {
             <th className="po-sheet-product">Product</th>
             <th className="num">Qty</th>
             <th className="num">Unit</th>
-            <th className="num">Rate</th>
-            <th className="num">Amount</th>
           </tr>
         </thead>
         <tbody>
@@ -64,20 +66,10 @@ function PurchaseOrderSheet({ po }) {
               </td>
               <td className="num">{formatQuantity(item.ordered_quantity)}</td>
               <td className="num">{item.unit || '—'}</td>
-              <td className="num">{formatMoney(item.expected_price)}</td>
-              <td className="num">{formatMoney(Number(item.ordered_quantity) * Number(item.expected_price))}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <div className="po-sheet-total">
-        <span>Total</span>
-        <strong>
-          {formatMoney(
-            po.items.reduce((sum, item) => sum + Number(item.ordered_quantity) * Number(item.expected_price), 0)
-          )}
-        </strong>
-      </div>
       {po.notes ? <div className="po-sheet-notes"><strong>Notes:</strong> {po.notes}</div> : null}
       <div className="po-sheet-sign">
         <span>Prepared by: {po.created_by_name || '—'}</span>
@@ -90,9 +82,12 @@ function PurchaseOrderSheet({ po }) {
 
 export default function PurchaseOrderDetailModal({ poId, onClose, onChange }) {
   const { showToast } = useToast();
+  const { hasPermission } = useAuth();
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [actualAmountReceipt, setActualAmountReceipt] = useState(null);
+  const [payReceipt, setPayReceipt] = useState(null);
 
   const detailAsync = useAsync(
     () => (poId ? purchaseOrderService.getById(poId) : Promise.resolve(null)),
@@ -203,7 +198,6 @@ export default function PurchaseOrderDetailModal({ poId, onClose, onChange }) {
                     <th className="num">Received</th>
                     <th className="num">Damaged</th>
                     <th className="num">Outstanding</th>
-                    <th className="num">Expected price</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -223,7 +217,6 @@ export default function PurchaseOrderDetailModal({ poId, onClose, onChange }) {
                         )}
                       </td>
                       <td className="num">{formatQuantity(item.remaining_quantity)}</td>
-                      <td className="num">{formatMoney(item.expected_price)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -239,36 +232,70 @@ export default function PurchaseOrderDetailModal({ poId, onClose, onChange }) {
                   {detail.receipts.length} receipt{detail.receipts.length === 1 ? '' : 's'} — recorded as purchases
                 </span>
               </div>
-              {detail.receipts.map((receipt) => (
-                <div className="po-receipt" key={receipt.id}>
-                  <div className="po-receipt-head">
-                    <span className="cell-main">{receipt.receipt_number}</span>
-                    <span>{formatDateOnly(receipt.receipt_date)}</span>
-                    <span>{receipt.created_by_name ? `by ${receipt.created_by_name}` : ''}</span>
-                    <span className="num po-receipt-total">{formatMoney(receipt.total_amount)}</span>
-                  </div>
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Product</th>
-                        <th className="num">Received</th>
-                        <th className="num">Unit price</th>
-                        <th className="num">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {receipt.items.map((item) => (
-                        <tr key={item.id}>
-                          <td>{item.product_name}</td>
-                          <td className="num">{formatQuantity(item.quantity)}</td>
-                          <td className="num">{formatMoney(item.purchase_price)}</td>
-                          <td className="num">{formatMoney(item.line_total)}</td>
+              {detail.receipts.map((receipt) => {
+                const receiptBalance = Math.max(
+                  Number(receipt.total_amount) - Number(receipt.paid_amount),
+                  0
+                );
+                const needsPricing =
+                  receipt.status === 'completed' &&
+                  Number(receipt.total_amount) === 0 &&
+                  Number(receipt.paid_amount) === 0;
+                return (
+                  <div className="po-receipt" key={receipt.id}>
+                    <div className="po-receipt-head">
+                      <span className="cell-main">{receipt.receipt_number}</span>
+                      <span>{formatDateOnly(receipt.receipt_date)}</span>
+                      <span>{receipt.created_by_name ? `by ${receipt.created_by_name}` : ''}</span>
+                      <span className="num po-receipt-total">
+                        {needsPricing ? 'Amount not recorded' : formatMoney(receipt.total_amount)}
+                      </span>
+                    </div>
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Product</th>
+                          <th className="num">Received</th>
+                          <th className="num">Unit price</th>
+                          <th className="num">Total</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ))}
+                      </thead>
+                      <tbody>
+                        {receipt.items.map((item) => (
+                          <tr key={item.id}>
+                            <td>{item.product_name}</td>
+                            <td className="num">{formatQuantity(item.quantity)}</td>
+                            <td className="num">{formatMoney(item.purchase_price)}</td>
+                            <td className="num">{formatMoney(item.line_total)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {hasPermission('purchases.create') && (needsPricing || receiptBalance > 0) ? (
+                      <div className="po-receipt-actions">
+                        {needsPricing ? (
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            onClick={() => setActualAmountReceipt(receipt)}
+                          >
+                            Record Actual Amount
+                          </button>
+                        ) : null}
+                        {!needsPricing && receiptBalance > 0 ? (
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            onClick={() => setPayReceipt(receipt)}
+                          >
+                            Record Payment
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <div className="detail-card">
@@ -290,6 +317,7 @@ export default function PurchaseOrderDetailModal({ poId, onClose, onChange }) {
             {status === 'draft' ? (
               <>
                 <button type="button" className="btn btn-primary" onClick={handleSend}>Send to Supplier</button>
+                <button type="button" className="btn btn-outline" onClick={() => setReceiveOpen(true)}>Receive Goods</button>
                 <button type="button" className="btn btn-outline" onClick={() => setEditOpen(true)}>Edit</button>
                 <button type="button" className="btn btn-outline" onClick={handlePrint}>Print</button>
                 <button type="button" className="btn btn-outline" onClick={() => setConfirmCancel(true)} style={{ color: 'var(--color-danger)' }}>
@@ -335,6 +363,35 @@ export default function PurchaseOrderDetailModal({ poId, onClose, onChange }) {
           onSaved={(updated) => {
             setEditOpen(false);
             showToast(`Purchase order ${updated.po_number} updated.`, 'success');
+            detailAsync.refetch();
+            onChange();
+          }}
+        />
+      ) : null}
+
+      {actualAmountReceipt ? (
+        <ActualPurchaseAmountModal
+          purchase={actualAmountReceipt}
+          reference={actualAmountReceipt.receipt_number}
+          items={actualAmountReceipt.items}
+          onClose={() => setActualAmountReceipt(null)}
+          onSaved={() => {
+            setActualAmountReceipt(null);
+            showToast('Actual purchase amount recorded.', 'success');
+            detailAsync.refetch();
+            onChange();
+          }}
+        />
+      ) : null}
+
+      {payReceipt ? (
+        <SupplierPaymentModal
+          purchase={{ ...payReceipt, invoice_number: payReceipt.receipt_number }}
+          onClose={() => setPayReceipt(null)}
+          onSubmit={async (body) => {
+            await purchaseService.recordPayment(payReceipt.id, body);
+            setPayReceipt(null);
+            showToast('Supplier payment recorded.', 'success');
             detailAsync.refetch();
             onChange();
           }}

@@ -201,9 +201,121 @@ async function setStatus(id, status, createdBy) {
   });
 }
 
+/**
+ * Record a supplier payment against an unpaid / partially-paid purchase.
+ * All business validation (purchase exists, is completed, not fully
+ * paid, amount <= remaining balance) happens inside the repository's
+ * single locked transaction, so overpayments are rejected and the
+ * balance can never go negative.
+ */
+async function recordPayment({ purchaseId, amount, method, paymentDate, notes, receivedBy }) {
+  return purchaseRepository.recordPayment({
+    purchaseId,
+    amount: toMoney(amount),
+    method,
+    paymentDate: paymentDate ? toDateString(paymentDate) : new Date().toISOString().slice(0, 10),
+    notes,
+    receivedBy,
+  });
+}
+
+/**
+ * Record/confirm the ACTUAL supplier purchase amount for a received
+ * purchase (a goods receipt created from a purchase order). This is the
+ * only place a PO-driven receipt total is set, so no "expected" price
+ * ever flows in from the purchase order. Rules (completed purchase, no
+ * payment recorded yet, every received line priced) are enforced inside
+ * the repository transaction.
+ */
+async function setActualAmount({ purchaseId, items, createdBy }) {
+  return purchaseRepository.setActualAmount({
+    purchaseId,
+    items,
+    createdBy,
+  });
+}
+
+async function getPayments(purchaseId) {
+  await getById(purchaseId);
+
+  const rows = await purchaseRepository.findPayments(purchaseId);
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    amount: toMoney(row.amount),
+    paymentMethod: row.payment_method,
+    paymentType: row.payment_type,
+    paymentDate: row.payment_date,
+    notes: row.notes,
+    receivedById: Number(row.received_by),
+    receivedByName: row.received_by_name,
+    createdAt: row.created_at,
+  }));
+}
+
+/**
+ * Purchase History (normal purchases).
+ */
+async function listHistory({
+  search,
+  type,
+  status,
+  fromDate,
+  toDate,
+  page = 1,
+  limit = 20,
+}) {
+  const offset = (page - 1) * limit;
+
+  const { rows, total } = await purchaseRepository.findHistory({
+    search,
+    type,
+    status,
+    fromDate: fromDate ? toDateString(fromDate) : undefined,
+    toDate: toDate ? toDateString(toDate) : undefined,
+    limit,
+    offset,
+  });
+
+  const items = rows.map((row) => ({
+    id: Number(row.id),
+    type: row.source_type,
+    reference: row.reference_no,
+    poNumber: row.po_number || null,
+    productName: row.product_name || null,
+    productCode: row.product_code || null,
+    unit: row.unit || null,
+    supplierId: row.supplier_id === null ? null : Number(row.supplier_id),
+    supplierName: row.supplier_name || null,
+    date: row.transaction_date,
+    total: toMoney(row.total_amount),
+    paid: row.paid_amount === null ? null : toMoney(row.paid_amount),
+    balance: row.paid_amount === null ? null : toMoney(row.total_amount - row.paid_amount),
+    paymentStatus: row.payment_status || null,
+    status: row.record_status,
+    notes: row.notes || null,
+    createdByName: row.created_by_name || null,
+    createdAt: row.created_at,
+  }));
+
+  return {
+    items,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+}
+
 module.exports = {
   list,
   getById,
   create,
   setStatus,
+  recordPayment,
+  setActualAmount,
+  getPayments,
+  listHistory,
 };
