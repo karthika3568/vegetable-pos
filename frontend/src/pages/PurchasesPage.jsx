@@ -52,6 +52,14 @@ function balanceDue(purchase) {
   return Math.max(Number(purchase.total_amount) - Number(purchase.paid_amount), 0);
 }
 
+function purchaseFinance(purchase) {
+  const total = Number(purchase?.total_amount) || 0;
+  const adjustment = Number(purchase?.damage_adjustment) || 0;
+  const accepted = Number(purchase?.damage_adjustment_accepted) === 1;
+  const gross = accepted ? total + adjustment : total;
+  return { total, gross, adjustment, accepted };
+}
+
 export default function PurchasesPage() {
   const { hasPermission } = useAuth();
   const { showToast } = useToast();
@@ -517,11 +525,12 @@ export default function PurchasesPage() {
                       <th>PO</th>
                       <th>Date</th>
                       <th>Supplier</th>
-                      <th className="num">Total</th>
+                      <th className="num">Gross</th>
+                      <th className="num">Adjustment</th>
+                      <th className="num">Net Payable</th>
                       <th className="num">Paid</th>
                       <th className="num">Balance</th>
                       <th>Payment</th>
-                      <th>Status</th>
                       <th className="actions-col">Actions</th>
                     </tr>
                   </thead>
@@ -535,6 +544,16 @@ export default function PurchasesPage() {
                         <td>{record.poNumber ? <span className="cell-code">{record.poNumber}</span> : '—'}</td>
                         <td>{formatDateOnly(record.date)}</td>
                         <td>{record.supplierName || '—'}</td>
+                        <td className="num">{formatMoney(record.gross ?? record.total)}</td>
+                        <td className="num">
+                          {Number(record.adjustment) > 0 ? (
+                            <span className="money" style={{ color: 'var(--color-danger)' }}>
+                              {formatMoney(record.adjustment)}
+                            </span>
+                          ) : (
+                            formatMoney(0)
+                          )}
+                        </td>
                         <td className="num">{formatMoney(record.total)}</td>
                         <td className="num">{formatMoney(record.paid)}</td>
                         <td className="num">
@@ -548,9 +567,6 @@ export default function PurchasesPage() {
                         </td>
                         <td>
                           <PaymentStatusBadge status={record.paymentStatus} />
-                        </td>
-                        <td>
-                          <StatusBadge status={record.status} />
                         </td>
                         <td className="actions-col">
                           <div className="table-actions">
@@ -672,7 +688,8 @@ export default function PurchasesPage() {
                         <div className="table-actions">
                           {Number(detail.total_amount) === 0 &&
                           Number(detail.paid_amount) === 0 &&
-                          detail.status === 'completed' ? (
+                          detail.status === 'completed' &&
+                          !(detail.items || []).some((item) => Number(item.purchase_price) > 0) ? (
                             <button
                               type="button"
                               className="btn btn-primary btn-sm"
@@ -695,7 +712,28 @@ export default function PurchasesPage() {
                     </div>
                     <div className="summary-grid">
                       <div className="summary-item">
-                        <span className="summary-label">Total</span>
+                        <span className="summary-label">Gross Amount</span>
+                        <span className="summary-value" style={{ fontWeight: 700 }}>
+                          {formatMoney(purchaseFinance(detail).gross)}
+                        </span>
+                      </div>
+                      {purchaseFinance(detail).adjustment > 0 ? (
+                        <div className="summary-item">
+                          <span className="summary-label">Damage Adjustment</span>
+                          <span
+                            className="summary-value"
+                            style={{
+                              color: purchaseFinance(detail).accepted ? 'var(--color-danger)' : undefined,
+                            }}
+                          >
+                            {purchaseFinance(detail).accepted
+                              ? `- ${formatMoney(purchaseFinance(detail).adjustment)}`
+                              : `${formatMoney(purchaseFinance(detail).adjustment)} (not accepted)`}
+                          </span>
+                        </div>
+                      ) : null}
+                      <div className="summary-item">
+                        <span className="summary-label">Net Payable</span>
                         <span className="summary-value" style={{ fontWeight: 700 }}>
                           {formatMoney(detail.total_amount)}
                         </span>

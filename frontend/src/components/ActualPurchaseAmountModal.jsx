@@ -13,6 +13,7 @@ export default function ActualPurchaseAmountModal({ purchase, reference, items, 
         unit: item.unit,
         quantity: Number(item.quantity),
         unitPrice: String(item.purchase_price ?? ''),
+        damagedQuantity: Number(item.damaged_quantity) > 0 ? String(item.damaged_quantity) : '',
       })),
     [items]
   );
@@ -24,18 +25,51 @@ export default function ActualPurchaseAmountModal({ purchase, reference, items, 
         : String(item.purchase_price)
     )
   );
+  const [damages, setDamages] = useState(() =>
+    (items || []).map((item) =>
+      Number(item.damaged_quantity) > 0 ? String(item.damaged_quantity) : ''
+    )
+  );
+  const [accepted, setAccepted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  const total = lines.reduce((sum, line, index) => {
+  const grossAmount = lines.reduce((sum, line, index) => {
     const price = Number(prices[index]);
     return sum + (Number.isFinite(price) && price >= 0 ? line.quantity * price : 0);
   }, 0);
+
+  const damageAmount = lines.reduce((sum, line, index) => {
+    const price = Number(prices[index]);
+    const damagedQty = Number(damages[index]) || 0;
+    if (!Number.isFinite(price) || price < 0 || damagedQty <= 0) {
+      return sum;
+    }
+    if (damagedQty > line.quantity) {
+      return sum;
+    }
+    return sum + damagedQty * price;
+  }, 0);
+
+  const damageApplied = accepted ? damageAmount : 0;
+  const netPayable = Math.max(grossAmount - damageApplied, 0);
 
   function updatePrice(index, value) {
     setPrices((current) => current.map((price, priceIndex) => (
       priceIndex === index ? value : price
     )));
+  }
+
+  function updateDamage(index, value) {
+    setDamages((current) => current.map((damage, damageIndex) => (
+      damageIndex === index ? value : damage
+    )));
+  }
+
+  function resetDamages() {
+    setDamages((current) => current.map((_, index) =>
+      lines[index]?.damagedQuantity || ''
+    ));
   }
 
   async function handleSubmit(event) {
@@ -56,6 +90,24 @@ export default function ActualPurchaseAmountModal({ purchase, reference, items, 
       return;
     }
 
+    const cleanDamages = [];
+    lines.forEach((line, index) => {
+      const damagedQty = Number(damages[index]) || 0;
+      if (damagedQty < 0) {
+        setError('Damaged quantities cannot be negative.');
+        return;
+      }
+      if (damagedQty > line.quantity) {
+        setError(`Damaged quantity for ${line.productName} cannot exceed the received quantity ${formatQuantity(line.quantity)}.`);
+        return;
+      }
+      if (damagedQty > 0) {
+        cleanDamages.push({ productId: line.productId, quantity: damagedQty });
+      }
+    });
+
+    if (error) return;
+
     setSubmitting(true);
     try {
       const saved = await purchaseService.recordActualAmount(purchase.id, {
@@ -63,6 +115,8 @@ export default function ActualPurchaseAmountModal({ purchase, reference, items, 
           productId: line.productId,
           unitPrice: Number(prices[index]),
         })),
+        damages: cleanDamages,
+        damageAdjustmentAccepted: accepted,
       });
       onSaved(saved);
     } catch (err) {
@@ -86,6 +140,7 @@ export default function ActualPurchaseAmountModal({ purchase, reference, items, 
               <tr>
                 <th>Product</th>
                 <th className="num">Received qty</th>
+                <th className="num">Damaged qty</th>
                 <th className="num">Actual unit price</th>
                 <th className="num">Amount</th>
               </tr>
@@ -99,6 +154,20 @@ export default function ActualPurchaseAmountModal({ purchase, reference, items, 
                   </td>
                   <td className="num">
                     {formatQuantity(line.quantity)}{line.unit ? ` ${line.unit}` : ''}
+                  </td>
+                  <td className="num">
+                    <input
+                      aria-label={`Damaged quantity for ${line.productName}`}
+                      className="actual-amount-input"
+                      type="number"
+                      min="0"
+                      max={line.quantity}
+                      step="0.001"
+                      value={damages[index]}
+                      placeholder="0"
+                      onChange={(event) => updateDamage(index, event.target.value)}
+                      disabled={submitting}
+                    />
                   </td>
                   <td className="num">
                     <input
@@ -124,9 +193,59 @@ export default function ActualPurchaseAmountModal({ purchase, reference, items, 
         </div>
 
         <div className="purchase-form-total">
-          <span>Actual total</span>
-          <strong>{formatMoney(total)}</strong>
+          <span>Gross amount</span>
+          <strong>{formatMoney(grossAmount)}</strong>
         </div>
+
+        {damageAmount > 0 ? (
+          <div className="damage-adjustment-section">
+            <div className="card-heading">
+              <h3 className="card-title">Damage Adjustment</h3>
+              {damages.some((d) => Number(d) > 0) ? (
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={resetDamages}
+                  disabled={submitting}
+                >
+                  Reset to received damage
+                </button>
+              ) : null}
+            </div>
+            <div className="summary-grid">
+              <div className="summary-item">
+                <span className="summary-label">Damage value</span>
+                <span className="summary-value">{formatMoney(damageAmount)}</span>
+              </div>
+              <div className="summary-item">
+                <span className="summary-label">Adjustment</span>
+                <span className="summary-value" style={{ color: accepted ? 'var(--color-danger)' : undefined }}>
+                  {accepted ? `- ${formatMoney(damageAmount)}` : formatMoney(0)}
+                </span>
+              </div>
+              <div className="summary-item">
+                <span className="summary-label">Net payable</span>
+                <span className="summary-value" style={{ fontWeight: 700 }}>
+                  {formatMoney(netPayable)}
+                </span>
+              </div>
+            </div>
+            <div className="form-field" style={{ marginTop: 0 }}>
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={accepted}
+                  onChange={(event) => setAccepted(event.target.checked)}
+                  disabled={submitting}
+                />
+                <span>
+                  Supplier accepted damage adjustment (- {formatMoney(damageAmount)}) is deducted from net payable.
+                  Unchecked, the damage is only tracked for stock/loss records and does not reduce supplier payable.
+                </span>
+              </label>
+            </div>
+          </div>
+        ) : null}
 
         {error ? <div className="form-alert" role="alert">{error}</div> : null}
         <div className="form-actions">

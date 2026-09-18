@@ -48,14 +48,7 @@ const STOCK_TYPES = [
   { value: 'return_sale', label: 'Sale return' },
   { value: 'adjustment', label: 'Adjustment' },
   { value: 'cancellation_reversal', label: 'Cancellation reversal' },
-];
-
-const SLOT_OPTIONS = [
-  { value: 1, label: '1 hour' },
-  { value: 2, label: '2 hours' },
-  { value: 3, label: '3 hours' },
-  { value: 4, label: '4 hours' },
-  { value: 6, label: '6 hours' },
+  { value: 'damage', label: 'Damage / Wastage' },
 ];
 
 function pad(num) {
@@ -127,6 +120,7 @@ function transactionTypeLabel(type) {
     return_sale: 'Sale return',
     adjustment: 'Adjustment',
     cancellation_reversal: 'Cancellation reversal',
+    damage: 'Damage / Wastage',
   };
   return labels[type] || type || '—';
 }
@@ -205,10 +199,13 @@ export default function AnalyticsPage() {
   const [productsPage, setProductsPage] = useState(1);
   const [selectedProductId, setSelectedProductId] = useState(null);
   const [trendValue, setTrendValue] = useState('7');
-  const [slotHours, setSlotHours] = useState(2);
   const [salesPage, setSalesPage] = useState(1);
   const [stockPage, setStockPage] = useState(1);
   const [stockType, setStockType] = useState('');
+  const [byTimeProductId, setByTimeProductId] = useState(null);
+  const [byTimeDate, setByTimeDate] = useState(todayString());
+  const [stockProductId, setStockProductId] = useState(null);
+  const [stockDate, setStockDate] = useState(todayString());
   const [asOfDate, setAsOfDate] = useState(todayString());
   const [asOfResult, setAsOfResult] = useState(null);
   const [asOfLoading, setAsOfLoading] = useState(false);
@@ -259,12 +256,21 @@ export default function AnalyticsPage() {
     setAsOfResult(null);
     setAsOfError(null);
     if (selectedProductId) {
+      setByTimeDate(todayString());
+      setStockDate(todayString());
       setAsOfLoading(true);
       analyticsService
         .priceAsOf({ productId: selectedProductId, date: todayString() })
         .then(setAsOfResult)
         .catch((err) => setAsOfError(err?.message || 'Price lookup failed'))
         .finally(() => setAsOfLoading(false));
+    }
+  }, [selectedProductId]);
+
+  useEffect(() => {
+    if (selectedProductId) {
+      setByTimeProductId(selectedProductId);
+      setStockProductId(selectedProductId);
     }
   }, [selectedProductId]);
 
@@ -371,32 +377,28 @@ export default function AnalyticsPage() {
 
   const byTime = useAsync(
     async () => {
-      if (!selectedProductId) return null;
-      const resolved = resolvePeriod(periodValue);
+      if (!byTimeProductId) return null;
       return analyticsService.salesByTime({
-        productId: selectedProductId,
-        fromDate: resolved.fromDate,
-        toDate: resolved.toDate,
-        slotHours,
+        productId: byTimeProductId,
+        date: byTimeDate,
       });
     },
-    [selectedProductId, periodValue, slotHours]
+    [byTimeProductId, byTimeDate]
   );
 
   const stockTx = useAsync(
     async () => {
-      if (!selectedProductId) return null;
-      const resolved = resolvePeriod(periodValue);
+      if (!stockProductId) return null;
       return analyticsService.stockTransactions({
-        productId: selectedProductId,
-        fromDate: resolved.fromDate,
-        toDate: resolved.toDate,
+        productId: stockProductId,
+        fromDate: stockDate,
+        toDate: stockDate,
         type: stockType || undefined,
         page: stockPage,
         limit: STOCK_TX_PAGE_SIZE,
       });
     },
-    [selectedProductId, periodValue, stockType, stockPage]
+    [stockProductId, stockDate, stockType, stockPage]
   );
 
   const handleRefresh = async () => {
@@ -865,39 +867,57 @@ export default function AnalyticsPage() {
               <div className="dash-card-head">
                 <div>
                   <h2 className="dash-card-title">Sales by Time</h2>
-                  <p className="dash-card-caption">{range.label} · summed over the selected range</p>
+                  <p className="dash-card-caption">
+                    Hourly sales · {formatDateOnly(byTimeDate)} · only actual sale hours
+                  </p>
                 </div>
-                <div className="dash-select-wrap">
-                  <select
-                    className="dash-select"
-                    aria-label="Time slot size"
-                    value={slotHours}
-                    onChange={(event) => setSlotHours(Number(event.target.value))}
-                  >
-                    {SLOT_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <FiChevronDown size={14} className="dash-select-chevron" aria-hidden="true" />
+                <div className="ana-time-controls">
+                  <label className="ana-filter-label" htmlFor="ana-bytime-product">
+                    Product
+                  </label>
+                  <div className="dash-select-wrap">
+                    <select
+                      id="ana-bytime-product"
+                      className="dash-select"
+                      aria-label="Product for sales by time"
+                      value={byTimeProductId || ''}
+                      onChange={(event) => setByTimeProductId(Number(event.target.value))}
+                    >
+                      {master.data?.items?.map((row) => (
+                        <option key={row.productId} value={row.productId}>
+                          {row.name}
+                        </option>
+                      ))}
+                    </select>
+                    <FiChevronDown size={14} className="dash-select-chevron" aria-hidden="true" />
+                  </div>
+                  <label className="ana-filter-label" htmlFor="ana-bytime-date">
+                    Date
+                  </label>
+                  <input
+                    id="ana-bytime-date"
+                    type="date"
+                    className="ana-date-input"
+                    value={byTimeDate}
+                    onChange={(event) => setByTimeDate(event.target.value || todayString())}
+                  />
                 </div>
               </div>
 
-              {byTime.loading && !byTime.data ? (
+              {byTime.loading || !byTimeProductId ? (
                 <SectionLoading label="Loading time slots…" />
-              ) : !byTimeData || !byTimeData.slots.some((slot) => slot.quantity > 0) ? (
+              ) : !byTimeData || !byTimeData.slots.length ? (
                 <InlineEmpty
                   icon={FiClock}
-                  title="No sales recorded"
-                  message="Time-of-day sales will appear here once this product is sold."
+                  title="No sales recorded on this date"
+                  message="Hourly sales will appear here for the selected product and date."
                 />
               ) : (
                 <div className="dash-table-wrap">
                   <table className="data-table">
                     <thead>
                       <tr>
-                        <th>Time slot</th>
+                        <th>Hour</th>
                         <th className="num">Sales</th>
                         <th className="num">Customers</th>
                         <th className="num">Qty</th>
@@ -999,29 +1019,69 @@ export default function AnalyticsPage() {
               <div className="dash-card-head">
                 <div>
                   <h2 className="dash-card-title">Stock Movement</h2>
-                  <p className="dash-card-caption">{selectedProduct.name} · {range.label}</p>
+                  <p className="dash-card-caption">
+                    {STOCK_TYPES.find((option) => option.value === stockType)?.label || 'All movements'} ·{' '}
+                    {formatDateOnly(stockDate)}
+                  </p>
                 </div>
-                <div className="dash-select-wrap">
-                  <select
-                    className="dash-select"
-                    aria-label="Stock movement type"
-                    value={stockType}
+                <div className="ana-time-controls">
+                  <label className="ana-filter-label" htmlFor="ana-stock-product">
+                    Product
+                  </label>
+                  <div className="dash-select-wrap">
+                    <select
+                      id="ana-stock-product"
+                      className="dash-select"
+                      aria-label="Product for stock movement"
+                      value={stockProductId || ''}
+                      onChange={(event) => {
+                        setStockProductId(Number(event.target.value));
+                        setStockPage(1);
+                      }}
+                    >
+                      {master.data?.items?.map((row) => (
+                        <option key={row.productId} value={row.productId}>
+                          {row.name}
+                        </option>
+                      ))}
+                    </select>
+                    <FiChevronDown size={14} className="dash-select-chevron" aria-hidden="true" />
+                  </div>
+                  <label className="ana-filter-label" htmlFor="ana-stock-date">
+                    Date
+                  </label>
+                  <input
+                    id="ana-stock-date"
+                    type="date"
+                    className="ana-date-input"
+                    value={stockDate}
                     onChange={(event) => {
-                      setStockType(event.target.value);
+                      setStockDate(event.target.value || todayString());
                       setStockPage(1);
                     }}
-                  >
-                    {STOCK_TYPES.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <FiChevronDown size={14} className="dash-select-chevron" aria-hidden="true" />
+                  />
+                  <div className="dash-select-wrap">
+                    <select
+                      className="dash-select"
+                      aria-label="Stock movement type"
+                      value={stockType}
+                      onChange={(event) => {
+                        setStockType(event.target.value);
+                        setStockPage(1);
+                      }}
+                    >
+                      {STOCK_TYPES.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <FiChevronDown size={14} className="dash-select-chevron" aria-hidden="true" />
+                  </div>
                 </div>
               </div>
 
-              {stockTx.loading && !stockTx.data ? (
+              {stockTx.loading || !stockProductId ? (
                 <SectionLoading label="Loading movements…" />
               ) : stockTxItems.length ? (
                 <>
@@ -1069,8 +1129,8 @@ export default function AnalyticsPage() {
               ) : (
                 <InlineEmpty
                   icon={FiBox}
-                  title="No stock movements in this period"
-                  message="Purchases, sales and adjustments will appear here."
+                  title="No stock movements on this date"
+                  message="Purchases, sales, damages and adjustments for the selected product and date will appear here."
                 />
               )}
             </article>

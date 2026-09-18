@@ -233,14 +233,21 @@ export default function PurchaseOrderDetailModal({ poId, onClose, onChange }) {
                 </span>
               </div>
               {detail.receipts.map((receipt) => {
+                const receiptTotal = Number(receipt.total_amount) || 0;
+                const receiptAdjustment = Number(receipt.damage_adjustment) || 0;
+                const adjustmentAccepted = Number(receipt.damage_adjustment_accepted) === 1;
+                const receiptGross = adjustmentAccepted
+                  ? receiptTotal + receiptAdjustment
+                  : receiptTotal;
                 const receiptBalance = Math.max(
-                  Number(receipt.total_amount) - Number(receipt.paid_amount),
+                  receiptTotal - Number(receipt.paid_amount),
                   0
                 );
                 const needsPricing =
                   receipt.status === 'completed' &&
                   Number(receipt.total_amount) === 0 &&
-                  Number(receipt.paid_amount) === 0;
+                  Number(receipt.paid_amount) === 0 &&
+                  !(receipt.items || []).some((item) => Number(item.purchase_price) > 0);
                 return (
                   <div className="po-receipt" key={receipt.id}>
                     <div className="po-receipt-head">
@@ -248,7 +255,7 @@ export default function PurchaseOrderDetailModal({ poId, onClose, onChange }) {
                       <span>{formatDateOnly(receipt.receipt_date)}</span>
                       <span>{receipt.created_by_name ? `by ${receipt.created_by_name}` : ''}</span>
                       <span className="num po-receipt-total">
-                        {needsPricing ? 'Amount not recorded' : formatMoney(receipt.total_amount)}
+                        {needsPricing ? 'Amount not recorded' : formatMoney(receiptTotal)}
                       </span>
                     </div>
                     <table className="data-table">
@@ -271,6 +278,26 @@ export default function PurchaseOrderDetailModal({ poId, onClose, onChange }) {
                         ))}
                       </tbody>
                     </table>
+                    {!needsPricing && receiptAdjustment > 0 ? (
+                      <div className="po-receipt-summary">
+                        <div className="summary-item">
+                          <span className="summary-label">Gross amount</span>
+                          <span className="summary-value">{formatMoney(receiptGross)}</span>
+                        </div>
+                        <div className="summary-item">
+                          <span className="summary-label">Damage adjustment</span>
+                          <span className="summary-value" style={{ color: 'var(--color-danger)' }}>
+                            {adjustmentAccepted ? `- ${formatMoney(receiptAdjustment)}` : formatMoney(0)}
+                          </span>
+                        </div>
+                        <div className="summary-item">
+                          <span className="summary-label">Net payable</span>
+                          <span className="summary-value" style={{ fontWeight: 700 }}>
+                            {formatMoney(receiptTotal)}
+                          </span>
+                        </div>
+                      </div>
+                    ) : null}
                     {hasPermission('purchases.create') && (needsPricing || receiptBalance > 0) ? (
                       <div className="po-receipt-actions">
                         {needsPricing ? (

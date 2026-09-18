@@ -147,6 +147,26 @@ const setActualAmount = [
   body('items.*.unitPrice')
     .isFloat({ min: 0 })
     .withMessage('each item unitPrice must be a non-negative number'),
+
+  body('damages')
+    .optional()
+    .isArray({ max: 200 })
+    .withMessage('damages must be an array of at most 200 items'),
+
+  body('damages.*.productId')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('each damage productId must be a positive integer'),
+
+  body('damages.*.quantity')
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage('each damage quantity must be a non-negative number'),
+
+  body('damageAdjustmentAccepted')
+    .optional()
+    .isBoolean()
+    .withMessage('damageAdjustmentAccepted must be a boolean'),
 ];
 
 const history = [

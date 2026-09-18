@@ -138,6 +138,8 @@ async function dashboard(query) {
     cancelledPurchaseCount: toCount(raw.purchases.cancelled_count),
     purchaseAmount: toMoney(raw.purchases.total_amount),
     purchasedQuantity: toQty(raw.purchaseQty),
+    supplierDue: toMoney(raw.purchases.due_amount),
+    unpaidPurchaseCount: toCount(raw.purchases.unpaid_count),
   };
 
   // -- profit section (identical to GET /api/v1/profit for this window) --
@@ -158,6 +160,11 @@ async function dashboard(query) {
   const expenses = {
     total: toMoney(raw.expenses.total),
     count: toCount(raw.expenses.c),
+    categories: raw.expenseCategoryRows.map((row) => ({
+      category: row.category,
+      total: toMoney(row.total),
+      count: toCount(row.c),
+    })),
   };
 
   const income = {
@@ -172,15 +179,29 @@ async function dashboard(query) {
   }
 
   const stock = {
+    totalProducts: toCount(raw.stock.total_products),
     totalProductsWithStock: toCount(raw.stock.products_with_stock),
     totalQuantityOnHand: toQty(raw.stock.total_on_hand),
+    inStockCount: toCount(raw.stock.in_stock_count),
     lowStockCount: toCount(raw.stock.low_stock_count),
+    outOfStockCount: toCount(raw.stock.out_of_stock_count),
+    inventoryValue: toMoney(raw.stock.inventory_value),
     purchaseQuantity: toQty(movementByType.purchase || 0),
     soldQuantity: toQty(movementByType.sale || 0),
     returnedQuantity: toQty((movementByType.return_purchase || 0) + (movementByType.return_sale || 0)),
     cancellationReversalQuantity: toQty(movementByType.cancellation_reversal || 0),
     adjustmentQuantity: toQty(movementByType.adjustment || 0),
   };
+
+  // -- stock alerts: at-or-below effective minimum (real threshold, not hardcoded) --
+  const lowStock = raw.lowStockList.map((row) => ({
+    productId: Number(row.product_id),
+    productName: row.name,
+    unit: row.unit,
+    quantity: toQty(row.quantity),
+    minimumStock: toQty(row.effective_min),
+    status: row.stock_status,
+  }));
 
   // -- credit section --
   const credit = {
@@ -189,6 +210,12 @@ async function dashboard(query) {
     creditReversals: toMoney(raw.creditActivity.reversed_amount),
     currentOutstanding: toMoney(raw.creditOutstanding.total),
     customersWithOutstanding: toCount(raw.creditOutstanding.outstanding_customers),
+    topCustomers: raw.creditTopCustomers.map((row) => ({
+      customerId: Number(row.customer_id),
+      customerName: row.name,
+      phone: row.phone,
+      outstanding: toMoney(row.current_balance),
+    })),
   };
 
   // -- top products (returns reduce sold qty; cancelled never appear) --
@@ -234,6 +261,26 @@ async function dashboard(query) {
     })
   );
 
+  // -- hourly sales (single-day windows: net sales per ACTUAL sale hour) --
+  const hourlyByHour = new Map();
+  if (raw.hourlySales && raw.hourlySales.gross && raw.hourlySales.gross.length) {
+    const returnsByHour = new Map(
+      (raw.hourlySales.returns || []).map((row) => [Number(row.hour_idx), toMoney(row.refunds)])
+    );
+    for (const row of raw.hourlySales.gross) {
+      const hour = Number(row.hour_idx);
+      hourlyByHour.set(hour, toMoney(toMoney(row.gross) - (returnsByHour.get(hour) || 0)));
+    }
+  }
+  const hourlySales = [...hourlyByHour.entries()]
+    .filter(([, value]) => value !== 0)
+    .sort((a, b) => a[0] - b[0])
+    .map(([hour, value]) => ({
+      hour,
+      label: `${String(hour).padStart(2, '0')}:00`,
+      value,
+    }));
+
   // -- recent sales / purchases --
   const recentSales = raw.recentSales.map((r) => ({
     saleId: Number(r.id),
@@ -244,6 +291,8 @@ async function dashboard(query) {
     paidAmount: toMoney(r.paid_amount),
     balanceDue: toMoney(r.balance_due),
     status: r.status,
+    paymentMethod: r.payment_type,
+    itemCount: toCount(r.item_count),
   }));
 
   const recentPurchases = raw.recentPurchases.map((r) => ({
@@ -255,6 +304,34 @@ async function dashboard(query) {
     status: r.status,
   }));
 
+  // -- recent stock movements (latest ledger rows, real data) --
+  const recentMovements = raw.recentMovementRows.map((r) => ({
+    id: Number(r.id),
+    productId: Number(r.product_id),
+    productName: r.product_name,
+    unit: r.unit,
+    transactionType: r.transaction_type,
+    quantityChange: toQty(r.quantity_change),
+    quantityAfter: toQty(r.quantity_after),
+    note: r.note,
+    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at,
+  }));
+
+  // -- pending purchase orders (real PO workflow data only) --
+  const pendingOrders = raw.pendingOrderRows.map((r) => ({
+    purchaseOrderId: Number(r.id),
+    poNumber: r.po_number,
+    supplier: r.supplier_name,
+    status: r.status,
+    orderDate: r.order_date instanceof Date ? r.order_date.toISOString().slice(0, 10) : r.order_date,
+    expectedDeliveryDate: r.expected_delivery_date
+      ? (r.expected_delivery_date instanceof Date
+          ? r.expected_delivery_date.toISOString().slice(0, 10)
+          : String(r.expected_delivery_date).slice(0, 10))
+      : null,
+    itemCount: toCount(r.item_count),
+  }));
+
   return {
     period: { fromDate, toDate },
     sales,
@@ -264,10 +341,14 @@ async function dashboard(query) {
     income,
     stock,
     credit,
+    lowStock,
     topProducts: topProducts.slice(0, topLimit),
     topCustomers: topCustomers.slice(0, topLimit),
+    hourlySales,
     recentSales,
     recentPurchases,
+    recentMovements,
+    pendingOrders,
   };
 }
 

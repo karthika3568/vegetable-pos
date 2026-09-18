@@ -304,6 +304,47 @@ async function findSaleLines({ productId, fromDate, toDateExclusive, limit, offs
 }
 
 /**
+ * "Sales by Time" for ONE selected calendar day: active sale lines of the
+ * product grouped by the ACTUAL HOUR each sale took place. Only hours that
+ * truly have sales are returned - no zero-fill, no fixed window. The day is
+ * the full calendar day [00:00:00, next day 00:00:00).
+ */
+async function findSalesByDate({ productId, date }) {
+  const [rows] = await pool.query(
+    `SELECT
+       HOUR(s.sale_date) AS hour_idx,
+       COUNT(DISTINCT s.id) AS sales_count,
+       COUNT(DISTINCT COALESCE(s.customer_id, 0)) AS customer_count,
+       COALESCE(SUM(si.quantity), 0) AS quantity,
+       COALESCE(SUM(si.line_total), 0) AS amount
+     FROM sale_items si
+     JOIN sales s ON s.id = si.sale_id
+     WHERE si.product_id = ?
+       AND ${ACTIVE}
+       AND s.sale_date >= ? AND s.sale_date < DATE_ADD(?, INTERVAL 1 DAY)
+     GROUP BY hour_idx
+     ORDER BY hour_idx ASC`,
+    [productId, `${date} 00:00:00`, date]
+  );
+
+  const [[totals]] = await pool.query(
+    `SELECT
+       COUNT(DISTINCT s.id) AS sales_count,
+       COUNT(DISTINCT COALESCE(s.customer_id, 0)) AS customer_count,
+       COALESCE(SUM(si.quantity), 0) AS quantity,
+       COALESCE(SUM(si.line_total), 0) AS amount
+     FROM sale_items si
+     JOIN sales s ON s.id = si.sale_id
+     WHERE si.product_id = ?
+       AND ${ACTIVE}
+       AND s.sale_date >= ? AND s.sale_date < DATE_ADD(?, INTERVAL 1 DAY)`,
+    [productId, `${date} 00:00:00`, date]
+  );
+
+  return { rows, totals };
+}
+
+/**
  * "Sales by Time": active sale lines of the product in the window grouped
  * by time-of-day slot (slotHours width). Slots are aggregated across the
  * whole window, so the same table powers a single-day view or a range.
@@ -353,5 +394,6 @@ module.exports = {
   findPriceHistory,
   findPriceAsOf,
   findSaleLines,
+  findSalesByDate,
   findSalesByTime,
 };

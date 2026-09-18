@@ -46,9 +46,9 @@ export const analyticsService = {
     };
   },
 
-  async salesByTime({ productId, fromDate, toDate, slotHours } = {}) {
+  async salesByTime({ productId, date, fromDate, toDate, slotHours } = {}) {
     const payload = await api.get(`/analytics/products/${productId}/sales-by-time`, {
-      params: paramsOf({ fromDate, toDate, slotHours }),
+      params: paramsOf({ date, fromDate, toDate, slotHours }),
     });
     return payload?.data ?? null;
   },

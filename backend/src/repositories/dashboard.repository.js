@@ -88,7 +88,9 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
       `SELECT
          COALESCE(SUM(CASE WHEN pu.status = 'completed' THEN 1 ELSE 0 END), 0) AS completed_count,
          COALESCE(SUM(CASE WHEN pu.status = 'cancelled' THEN 1 ELSE 0 END), 0) AS cancelled_count,
-         COALESCE(SUM(CASE WHEN pu.status = 'completed' THEN pu.total_amount ELSE 0 END), 0) AS total_amount
+         COALESCE(SUM(CASE WHEN pu.status = 'completed' THEN pu.total_amount ELSE 0 END), 0) AS total_amount,
+         COALESCE(SUM(CASE WHEN pu.status = 'completed' THEN pu.total_amount - pu.paid_amount ELSE 0 END), 0) AS due_amount,
+         COALESCE(SUM(CASE WHEN pu.status = 'completed' AND pu.payment_status IN ('unpaid','partial') THEN 1 ELSE 0 END), 0) AS unpaid_count
        FROM purchases pu
        WHERE pu.purchase_date >= ? AND pu.purchase_date <= ?`,
       [fromDate, toDate]
@@ -115,15 +117,19 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
       [fromDate, toDate]
     );
 
-    // ---- STOCK KPI (current snapshot + low stock) ----
+    // ---- STOCK KPI (current snapshot + low stock + value) ----
     const [[stock]] = await conn.query(
       `SELECT
+         COUNT(*) AS total_products,
          COALESCE(SUM(CASE WHEN st.quantity > 0 THEN 1 ELSE 0 END), 0) AS products_with_stock,
          COALESCE(SUM(st.quantity), 0) AS total_on_hand,
-         COALESCE(SUM(CASE WHEN COALESCE(st.quantity, 0) <= COALESCE(NULLIF(p.reorder_level, 0), ?) THEN 1 ELSE 0 END), 0) AS low_stock_count
+         COALESCE(SUM(CASE WHEN COALESCE(st.quantity, 0) <= COALESCE(NULLIF(p.reorder_level, 0), ?) AND COALESCE(st.quantity, 0) > 0 THEN 1 ELSE 0 END), 0) AS low_stock_count,
+         COALESCE(SUM(CASE WHEN COALESCE(st.quantity, 0) > COALESCE(NULLIF(p.reorder_level, 0), ?) THEN 1 ELSE 0 END), 0) AS in_stock_count,
+         COALESCE(SUM(CASE WHEN COALESCE(st.quantity, 0) <= 0 THEN 1 ELSE 0 END), 0) AS out_of_stock_count,
+         COALESCE(SUM(COALESCE(st.quantity, 0) * p.cost_price), 0) AS inventory_value
        FROM products p
        LEFT JOIN stock st ON st.product_id = p.id`,
-      [lowStockDefault]
+      [lowStockDefault, lowStockDefault]
     );
 
     // ---- STOCK PERIOD MOVEMENT (by created_at, half-open) ----
@@ -209,12 +215,42 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
       [fromDate, toDateExclusive]
     );
 
+    // ---- HOURLY SALES (single-day windows only) ----
+    // Powers the Dashboard Sales Overview date picker: net sales per ACTUAL
+    // sale hour of the selected calendar day (gross minus returns on the
+    // sale's own sale_date, mirroring the KPI section). Multi-day windows
+    // keep this empty - the date-picker view is always a single day.
+    let hourlySales = { gross: [], returns: [] };
+    if (fromDate === toDate) {
+      const [hourlyGross] = await conn.query(
+        `SELECT HOUR(s.sale_date) AS hour_idx,
+                COALESCE(SUM(s.total_amount), 0) AS gross
+         FROM sales s
+         WHERE ${ACTIVE} AND s.sale_date >= ? AND s.sale_date < ?
+         GROUP BY hour_idx
+         ORDER BY hour_idx`,
+        [fromDate, toDateExclusive]
+      );
+      const [hourlyReturns] = await conn.query(
+        `SELECT HOUR(s.sale_date) AS hour_idx,
+                COALESCE(SUM(r.refund_amount), 0) AS refunds
+         FROM sale_returns r
+         JOIN sales s ON s.id = r.sale_id
+         WHERE ${ACTIVE} AND s.sale_date >= ? AND s.sale_date < ?
+         GROUP BY hour_idx
+         ORDER BY hour_idx`,
+        [fromDate, toDateExclusive]
+      );
+      hourlySales = { gross: hourlyGross, returns: hourlyReturns };
+    }
+
     // ---- RECENT SALES / PURCHASES ----
     const [recentSales] = await conn.query(
       `SELECT
          s.id, s.invoice_number, s.sale_date, s.customer_id,
          COALESCE(c.name, 'Walk-in Customer') AS customer_name,
-         s.total_amount, s.paid_amount, s.balance_due, s.status
+         s.total_amount, s.paid_amount, s.balance_due, s.status, s.payment_type,
+         (SELECT COUNT(*) FROM sale_items si WHERE si.sale_id = s.id) AS item_count
        FROM sales s
        LEFT JOIN customers c ON c.id = s.customer_id
        ORDER BY s.sale_date DESC, s.id DESC
@@ -231,6 +267,68 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
        ORDER BY pu.purchase_date DESC, pu.id DESC
        LIMIT ?`,
       [top]
+    );
+
+    // ---- LOW STOCK ALERTS (uses the same effective-min rule as the KPI) ----
+    const [lowStockList] = await conn.query(
+      `SELECT
+         p.id AS product_id, p.name, p.unit,
+         COALESCE(st.quantity, 0) AS quantity,
+         COALESCE(NULLIF(p.reorder_level, 0), ?) AS effective_min,
+         CASE WHEN COALESCE(st.quantity, 0) <= 0 THEN 'out' ELSE 'low' END AS stock_status
+       FROM products p
+       LEFT JOIN stock st ON st.product_id = p.id
+       WHERE COALESCE(st.quantity, 0) <= COALESCE(NULLIF(p.reorder_level, 0), ?)
+       ORDER BY COALESCE(st.quantity, 0) ASC, p.name ASC
+       LIMIT 8`,
+      [lowStockDefault, lowStockDefault]
+    );
+
+    // ---- RECENT STOCK MOVEMENTS (latest ledger rows) ----
+    const [recentMovementRows] = await conn.query(
+      `SELECT
+         tx.id, tx.product_id, p.name AS product_name, p.unit,
+         tx.transaction_type, tx.quantity_change, tx.quantity_after, tx.note,
+         tx.created_at
+       FROM stock_transactions tx
+       JOIN products p ON p.id = tx.product_id
+       ORDER BY tx.created_at DESC, tx.id DESC
+       LIMIT 6`
+    );
+
+    // ---- CREDIT: top customers by live outstanding balance ----
+    const [creditTopCustomers] = await conn.query(
+      `SELECT c.id AS customer_id, c.name, c.phone, c.current_balance
+       FROM customers c
+       WHERE c.current_balance > 0
+       ORDER BY c.current_balance DESC
+       LIMIT 5`
+    );
+
+    // ---- PURCHASE ORDERS: pending (not yet received / cancelled) ----
+    const [pendingOrderRows] = await conn.query(
+      `SELECT
+         po.id, po.po_number, po.status, po.order_date, po.expected_delivery_date,
+         su.name AS supplier_name,
+         COUNT(poi.id) AS item_count
+       FROM purchase_orders po
+       JOIN suppliers su ON su.id = po.supplier_id
+       LEFT JOIN purchase_order_items poi ON poi.purchase_order_id = po.id
+       WHERE po.status IN ('draft','sent','partially_received')
+       GROUP BY po.id, po.po_number, po.status, po.order_date, po.expected_delivery_date, su.name
+       ORDER BY (po.expected_delivery_date IS NULL) ASC, po.expected_delivery_date ASC, po.order_date ASC
+       LIMIT 3`
+    );
+
+    // ---- EXPENSES: top categories in window ----
+    const [expenseCategoryRows] = await conn.query(
+      `SELECT category, COUNT(*) AS c, COALESCE(SUM(amount), 0) AS total
+       FROM expenses
+       WHERE expense_date >= ? AND expense_date <= ?
+       GROUP BY category
+       ORDER BY total DESC
+       LIMIT 5`,
+      [fromDate, toDate]
     );
 
     await conn.commit();
@@ -252,8 +350,14 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
       productReturns,
       topCustomerRows,
       customerReturns,
+      hourlySales,
       recentSales,
       recentPurchases,
+      lowStockList,
+      recentMovementRows,
+      creditTopCustomers,
+      pendingOrderRows,
+      expenseCategoryRows,
     };
   } catch (err) {
     await conn.rollback();

@@ -43,6 +43,8 @@ const BASE_SELECT = `
     pu.purchase_date,
     pu.total_amount,
     pu.paid_amount,
+    pu.damage_adjustment,
+    pu.damage_adjustment_accepted,
     pu.payment_status,
     pu.status,
     pu.notes,
@@ -59,6 +61,11 @@ const BASE_SELECT = `
 
 function toMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function to3(value) {
+  const n = Math.round((Number(value) + Number.EPSILON) * 1000) / 1000;
+  return Object.is(n, -0) ? 0 : n;
 }
 
 function money(value) {
@@ -163,9 +170,14 @@ async function findById(id) {
        p.sku AS product_code,
        pi.quantity,
        pi.unit_cost AS purchase_price,
-       pi.line_total
+       pi.line_total,
+       COALESCE(poi.damaged_quantity, 0) AS damaged_quantity
      FROM purchase_items pi
+     JOIN purchases pu ON pu.id = pi.purchase_id
      JOIN products p ON p.id = pi.product_id
+     LEFT JOIN purchase_order_items poi
+       ON poi.purchase_order_id = pu.purchase_order_id
+       AND poi.product_id = pi.product_id
      WHERE pi.purchase_id = ?
      ORDER BY pi.id ASC`,
     [id]
@@ -234,7 +246,7 @@ async function recordPayment({ purchaseId, amount, method, paymentDate, notes, r
     await connection.beginTransaction();
 
     const [purchaseRows] = await connection.query(
-      `SELECT id, status, total_amount
+      `SELECT id, supplier_id, status, total_amount
        FROM purchases
        WHERE id = ?
        FOR UPDATE`,
@@ -315,11 +327,17 @@ async function recordPayment({ purchaseId, amount, method, paymentDate, notes, r
  *   - every purchase line must be given an actual unit price
  *   - line_total is a stored generated column, so setting unit_cost
  *     updates quantity * unit_cost; total_amount is the sum of lines.
+ *   - damage_adjustment: monetary value of damaged goods (tracked for
+ *     audit even if supplier does not accept the deduction). It is
+ *     computed server-side from the per-product damaged quantities and
+ *     the actual unit prices just entered on this purchase
+ *   - damage_adjustment_accepted: when true, the adjustment is deducted
+ *     from total_amount to compute net payable (supplier liability)
  *
  * The purchase row is locked FOR UPDATE so pricing serializes with
  * concurrent payments/receives.
  */
-async function setActualAmount({ purchaseId, items, createdBy }) {
+async function setActualAmount({ purchaseId, items, damages, damageAdjustmentAccepted = false, createdBy }) {
   const connection = await pool.getConnection();
 
   try {
@@ -393,7 +411,7 @@ async function setActualAmount({ purchaseId, items, createdBy }) {
       }
     }
 
-    let total = 0;
+    let grossTotal = 0;
 
     for (const row of purchaseItems) {
       const productId = Number(row.product_id);
@@ -406,7 +424,7 @@ async function setActualAmount({ purchaseId, items, createdBy }) {
 
       const unitPrice = priceByProduct.get(productId);
       const lineTotal = toMoney(Number(row.quantity) * unitPrice);
-      total = toMoney(total + lineTotal);
+      grossTotal = toMoney(grossTotal + lineTotal);
 
       await connection.query(
         `UPDATE purchase_items SET unit_cost = ? WHERE id = ?`,
@@ -414,9 +432,49 @@ async function setActualAmount({ purchaseId, items, createdBy }) {
       );
     }
 
+    let damageValue = 0;
+    const receivedQtyByProduct = new Map(
+      purchaseItems.map((row) => [Number(row.product_id), Number(row.quantity)])
+    );
+
+    for (const damage of damages || []) {
+      const productId = Number(damage.productId);
+      const quantity = to3(Number(damage.quantity));
+
+      if (!Number.isInteger(productId) || productId < 1) {
+        throw ApiError.badRequest('each damage productId must be a positive integer');
+      }
+      if (!Number.isFinite(quantity) || quantity < 0) {
+        throw ApiError.badRequest('each damage quantity must be a non-negative number');
+      }
+      if (!knownProducts.has(productId)) {
+        throw ApiError.badRequest(`Product ${productId} damage line does not belong to this purchase`);
+      }
+      if (quantity > receivedQtyByProduct.get(productId)) {
+        throw ApiError.badRequest(
+          `Damage quantity for product ${productId} cannot exceed the received quantity`
+        );
+      }
+      damageValue = toMoney(damageValue + quantity * priceByProduct.get(productId));
+    }
+
+    const accepted = Boolean(damageAdjustmentAccepted);
+
+    if (accepted && damageValue > grossTotal) {
+      throw ApiError.badRequest(
+        'damage adjustment cannot exceed the gross purchase amount'
+      );
+    }
+
+    const netTotal = accepted ? toMoney(grossTotal - damageValue) : grossTotal;
+
     await connection.query(
-      `UPDATE purchases SET total_amount = ? WHERE id = ?`,
-      [total, purchaseId]
+      `UPDATE purchases
+       SET total_amount = ?,
+           damage_adjustment = ?,
+           damage_adjustment_accepted = ?
+       WHERE id = ?`,
+      [netTotal, damageValue, accepted ? 1 : 0, purchaseId]
     );
 
     await connection.commit();
@@ -621,6 +679,8 @@ const HISTORY_PURCHASE_SELECT = `
     pu.purchase_date AS transaction_date,
     pu.total_amount,
     pu.paid_amount,
+    pu.damage_adjustment,
+    pu.damage_adjustment_accepted,
     pu.payment_status,
     pu.status AS record_status,
     pu.notes,

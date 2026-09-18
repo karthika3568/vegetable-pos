@@ -540,8 +540,10 @@ CREATE INDEX idx_sale_items_product ON sale_items(product_id);
 -- so "Payment History" and "Credit History" both come from a single
 -- append-only source of truth. Corrections are new rows referencing
 -- `reversed_payment_id`, never edits of a historical payment.
--- Exactly one of sale_id / purchase_id must be set; customer_id is
--- always set for sale/credit payments and NULL for purchase payments.
+-- One target per payment: a sale (whose customer_id is set for a
+-- named-customer sale or NULL for a walk-in), a purchase (supplier_id
+-- may be set, customer_id never), a credit repayment (customer only),
+-- or a direct supplier payment. Never more than one target.
 -- =====================================================================
 CREATE TABLE payments (
     id                  INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -569,7 +571,7 @@ CREATE TABLE payments (
         ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT chk_payments_amount CHECK (amount <> 0),
     CONSTRAINT chk_payments_one_target CHECK (
-        (sale_id IS NOT NULL AND purchase_id IS NULL AND customer_id IS NULL AND supplier_id IS NULL) OR
+        (sale_id IS NOT NULL AND purchase_id IS NULL AND supplier_id IS NULL) OR
         (sale_id IS NULL AND purchase_id IS NOT NULL AND customer_id IS NULL) OR
         (sale_id IS NULL AND purchase_id IS NULL AND customer_id IS NOT NULL AND supplier_id IS NULL) OR
         (sale_id IS NULL AND purchase_id IS NULL AND customer_id IS NULL AND supplier_id IS NOT NULL)

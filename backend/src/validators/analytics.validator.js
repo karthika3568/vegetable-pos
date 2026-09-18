@@ -52,6 +52,10 @@ const sales = [...productIdCheck, ...dateChecks, ...paginationChecks];
 const salesByTime = [
   ...productIdCheck,
   ...dateChecks,
+  query('date')
+    .optional({ values: 'falsy' })
+    .isISO8601()
+    .withMessage('date must be a valid date (YYYY-MM-DD)'),
   query('slotHours')
     .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 6 })
@@ -82,6 +86,7 @@ const stockTransactions = [
       'return_sale',
       'adjustment',
       'cancellation_reversal',
+      'damage',
     ])
     .withMessage('type is not a valid stock transaction type'),
 ];

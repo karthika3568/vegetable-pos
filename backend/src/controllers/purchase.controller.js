@@ -95,6 +95,11 @@ const setActualAmount = asyncHandler(async (req, res) => {
       productId: Number(item.productId),
       unitPrice: Number(item.unitPrice),
     })),
+    damages: (req.body.damages || []).map((damage) => ({
+      productId: Number(damage.productId),
+      quantity: Number(damage.quantity),
+    })),
+    damageAdjustmentAccepted: Boolean(req.body.damageAdjustmentAccepted),
     createdBy: req.user.id,
   });
 

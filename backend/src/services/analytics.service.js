@@ -234,11 +234,56 @@ async function listSales(query, productId) {
 
 /**
  * GET /analytics/products/:productId/sales-by-time
- * Time-of-day buckets for the window. Missing slots are returned with
- * zeros so the UI always renders a complete grid.
+ * Two modes, both reading the real sale ledger:
+ *   - DATE + PRODUCT mode (query.date): one selected calendar day, hourly
+ *     buckets for ONLY the hours that actually have sales (no empty bars,
+ *     no fixed 6-hour / 7-day window).
+ *   - legacy window + slot mode (query.fromDate/toDate/slotHours): kept for
+ *     backward compatibility with existing consumers.
  */
 async function salesByTime(query, productId) {
   await ensureProduct(productId);
+
+  if (query.date) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(query.date)) {
+      throw ApiError.badRequest('date must be a valid date (YYYY-MM-DD)');
+    }
+
+    const { rows, totals } = await analyticsRepository.findSalesByDate({
+      productId,
+      date: query.date,
+    });
+
+    const slots = rows.map((row) => {
+      const hour = Number(row.hour_idx);
+      const quantity = toQty(row.quantity);
+      const amount = toMoney(row.amount);
+      return {
+        slotLabel: `${String(hour).padStart(2, '0')}:00 - ${String(hour + 1).padStart(2, '0')}:00`,
+        hour,
+        time: `${String(hour).padStart(2, '0')}:00`,
+        quantity,
+        salesCount: Number(row.sales_count),
+        customerCount: Number(row.customer_count),
+        amount,
+        avgPrice: quantity > 0 ? toMoney(amount / quantity) : 0,
+      };
+    });
+
+    const totalQuantity = toQty(totals.quantity);
+    return {
+      date: query.date,
+      slots,
+      totals: {
+        quantity: totalQuantity,
+        salesCount: Number(totals.sales_count),
+        customerCount: Number(totals.customer_count),
+        amount: toMoney(totals.amount),
+        avgPrice: totalQuantity > 0 ? toMoney(Number(totals.amount) / totalQuantity) : 0,
+      },
+    };
+  }
+
   const window = profitService.resolveWindow(query);
   const slotHours = query.slotHours || 2;
   const slotCount = Math.max(1, Math.min(6, slotHours));

@@ -113,6 +113,8 @@ async function findById(id) {
        pu.purchase_date AS receipt_date,
        pu.total_amount,
        pu.paid_amount,
+       pu.damage_adjustment,
+       pu.damage_adjustment_accepted,
        pu.payment_status,
        pu.status,
        pu.notes,
@@ -131,6 +133,7 @@ FROM purchases pu
     const placeholders = receipts.map(() => '?').join(',');
     const [rows] = await pool.query(
       `SELECT
+         pi.id,
          pi.purchase_id,
          pi.product_id,
          p.name AS product_name,
@@ -138,9 +141,14 @@ FROM purchases pu
          p.unit,
          pi.quantity,
          pi.unit_cost AS purchase_price,
-         pi.line_total
+         pi.line_total,
+         COALESCE(poi.damaged_quantity, 0) AS damaged_quantity
        FROM purchase_items pi
+       JOIN purchases pu ON pu.id = pi.purchase_id
        JOIN products p ON p.id = pi.product_id
+       LEFT JOIN purchase_order_items poi
+         ON poi.purchase_order_id = pu.purchase_order_id
+         AND poi.product_id = pi.product_id
        WHERE pi.purchase_id IN (${placeholders})
        ORDER BY pi.purchase_id ASC, pi.id ASC`,
       receipts.map((r) => r.id)
@@ -398,9 +406,10 @@ async function setStatus(id, targetStatus, { allowedFrom, createdBy }) {
  *   2. validate the incoming lines against remaining quantities
  *   3. UPDATE purchase_order_items (received/damaged)
  *   4. INSERT purchases (receipt, auto receipt number, 'credit') +
- *      purchase_items for received quantities only
+ *      purchase_items for the RECEIVED (billed) quantities only
  *   5. stockRepository.syncPurchaseStock('completed') - stock amounts +
- *      ledger rows for the received quantities only, atomically
+ *      ledger rows for the GOOD quantities (received - damaged) only,
+ *      atomically (damaged goods are never stocked, but still billed)
  *   6. derive PO status from item totals
  *
  * Any failure rolls everything back: no partial stock, no orphan
@@ -441,6 +450,7 @@ async function receive(poId, { receiptDate, lines, createdBy }) {
 
     const updates = [];
     const purchaseItems = [];
+    const stockItems = [];
     let anyReceived = false;
 
     for (const line of lines) {
@@ -482,12 +492,19 @@ async function receive(poId, { receiptDate, lines, createdBy }) {
 
       if (received > 0) {
         anyReceived = true;
-        // Quantity is recorded now; the ACTUAL supplier price/total is
-        // entered after receiving (see purchaseRepository.setActualAmount).
+        // The supplier bill is based on the RECEIVED (billed) quantity;
+        // the actual supplier price/total is entered after receiving
+        // (see purchaseRepository.setActualAmount). But only the GOOD
+        // quantity (received - damaged) may enter available stock, so
+        // stock reconciliation runs against stockItems separately.
         purchaseItems.push({
           productId: row.product_id,
           quantity: received,
           purchasePrice: 0,
+        });
+        stockItems.push({
+          productId: row.product_id,
+          quantity: to3(received - damaged),
         });
       }
     }
@@ -549,7 +566,7 @@ async function receive(poId, { receiptDate, lines, createdBy }) {
     await stockRepository.syncPurchaseStock({
       conn: connection,
       purchaseId,
-      items: purchaseItems,
+      items: stockItems,
       targetStatus: 'completed',
       createdBy,
     });

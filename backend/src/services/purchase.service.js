@@ -226,11 +226,19 @@ async function recordPayment({ purchaseId, amount, method, paymentDate, notes, r
  * ever flows in from the purchase order. Rules (completed purchase, no
  * payment recorded yet, every received line priced) are enforced inside
  * the repository transaction.
+ *
+ * damages: per-product damaged quantities - the damage value is computed
+ *   server-side (damaged qty x actual unit price) and recorded on the
+ *   purchase. damageAdjustmentAccepted: when true, the adjustment is
+ *   deducted from the gross amount to compute the net payable
+ *   (supplier liability).
  */
-async function setActualAmount({ purchaseId, items, createdBy }) {
+async function setActualAmount({ purchaseId, items, damages, damageAdjustmentAccepted, createdBy }) {
   return purchaseRepository.setActualAmount({
     purchaseId,
     items,
+    damages,
+    damageAdjustmentAccepted,
     createdBy,
   });
 }
@@ -277,26 +285,43 @@ async function listHistory({
     offset,
   });
 
-  const items = rows.map((row) => ({
-    id: Number(row.id),
-    type: row.source_type,
-    reference: row.reference_no,
-    poNumber: row.po_number || null,
-    productName: row.product_name || null,
-    productCode: row.product_code || null,
-    unit: row.unit || null,
-    supplierId: row.supplier_id === null ? null : Number(row.supplier_id),
-    supplierName: row.supplier_name || null,
-    date: row.transaction_date,
-    total: toMoney(row.total_amount),
-    paid: row.paid_amount === null ? null : toMoney(row.paid_amount),
-    balance: row.paid_amount === null ? null : toMoney(row.total_amount - row.paid_amount),
-    paymentStatus: row.payment_status || null,
-    status: row.record_status,
-    notes: row.notes || null,
-    createdByName: row.created_by_name || null,
-    createdAt: row.created_at,
-  }));
+  const items = rows.map((row) => {
+    const total = toMoney(row.total_amount);
+    const acceptedAdjustment = Number(row.damage_adjustment_accepted) === 1;
+    const trackedAdjustment = toMoney(row.damage_adjustment || 0);
+
+    // total_amount already reflects the accepted adjustment (net payable).
+    // When the supplier did NOT accept the adjustment, gross == net.
+    const gross = acceptedAdjustment
+      ? toMoney(total + trackedAdjustment)
+      : total;
+    const adjustment = acceptedAdjustment ? trackedAdjustment : 0;
+
+    return {
+      id: Number(row.id),
+      type: row.source_type,
+      reference: row.reference_no,
+      poNumber: row.po_number || null,
+      productName: row.product_name || null,
+      productCode: row.product_code || null,
+      unit: row.unit || null,
+      supplierId: row.supplier_id === null ? null : Number(row.supplier_id),
+      supplierName: row.supplier_name || null,
+      date: row.transaction_date,
+      total,
+      gross,
+      adjustment,
+      damageAdjustment: trackedAdjustment,
+      damageAdjustmentAccepted: acceptedAdjustment,
+      paid: row.paid_amount === null ? null : toMoney(row.paid_amount),
+      balance: row.paid_amount === null ? null : toMoney(total - row.paid_amount),
+      paymentStatus: row.payment_status || null,
+      status: row.record_status,
+      notes: row.notes || null,
+      createdByName: row.created_by_name || null,
+      createdAt: row.created_at,
+    };
+  });
 
   return {
     items,
