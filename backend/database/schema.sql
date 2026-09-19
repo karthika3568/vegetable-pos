@@ -553,6 +553,56 @@ CREATE INDEX idx_sales_status ON sales(status);
 CREATE INDEX idx_sales_created_by ON sales(created_by);
 
 -- =====================================================================
+-- Per-prefix gap-free invoice counter for sales
+-- =====================================================================
+-- Sales invoice numbers were `${invoice_prefix}${sale.id}` (INV-74,
+-- INV-63, INV-48...) - auto-increment ids created gaps on cancelled /
+-- failed / returned inserts. This counter hands sales the NEXT number for
+-- their prefix (INV-001, INV-002, ...) inside the SAME transaction that
+-- inserts the sale, using a SELECT ... FOR UPDATE row lock so two
+-- cashiers can never be given the same number Secret a rolled-back
+-- attempt never burns one. One counter row per invoice prefix; prefixes
+-- with no sales yet start at 1. Sales.invoice_number stays UNIQUE (see
+-- sales) - the leading zeroes are cosmetic (search still matches because
+-- plain text is compared).
+-- NOTE: the (misspelled, legacy) table name invoice_sequencens is
+-- kept on purpose so the migration + schema stay in lockstep with the
+-- seed below.
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS invoice_sequencens (
+    prefix        VARCHAR(50) NOT NULL,
+    next_invoice  INT UNSIGNED NOT NULL DEFAULT 1,
+    PRIMARY KEY (prefix)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- =====================================================================
+-- 13B. SALE INVOICE SEQUENCE (per-prefix gap-free counter)
+-- =====================================================================
+-- Sales are numbered `${invoice_prefix}${sequence}` in the display
+-- (INV-001, INV-002, ...). The counter lives HERE, keyed by the same
+-- prefix that `settings.setting_key = 'invoice_prefix'` stores, so
+-- each prefix has its own contiguous run and no two prefixes ever
+-- share the same number. The row is LOCKED (SELECT ... FOR UPDATE)
+-- inside the sale-creation transaction on MySQL and incremented in
+-- the same statement, which makes numbering:
+--   * sequential  - INV-001, INV-002, ... (la display, not file id)
+--   * concurrency-safe - two cashiers selling at the same time can
+--     never be handed the same number
+--   * contiguous   - a rolled-back / failed sale attempt does NOT burn
+--     a number, so displayed sequences stay gap-free (INV-002 cannot
+--     follow INV-001 if the 002 attempt failed).
+--
+-- The 019 file in database/migrations is the MANUAL upgrade for
+-- existing deployments; this table in schema.sql is what fresh
+-- databases get (migrate.js applies database/schema.sql).
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS invoice_sequencens (
+    prefix        VARCHAR(50) NOT NULL,
+    next_invoice  INT UNSIGNED NOT NULL DEFAULT 1,
+    PRIMARY KEY (prefix)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- =====================================================================
 -- 14. SALE_ITEMS
 -- Line items of a sale. Drives stock decreases (via stock_transactions)
 -- and preserves the exact price charged at time of sale, independent

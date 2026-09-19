@@ -2,12 +2,14 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useAsync.js';
 import { posService } from '../services/pos.service.js';
+import { customerService } from '../services/customer.service.js';
 import { salesService, PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from '../services/sales.service.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { useLanguage } from '../i18n/index.jsx';
 import ErrorState from '../components/ErrorState.jsx';
 import EmptyState from '../components/EmptyState.jsx';
+import Modal from '../components/Modal.jsx';
 import { FiChevronLeft, FiChevronRight } from 'react-icons/fi';
 import Spinner from '../components/Spinner.jsx';
 import ProductImage from '../components/ProductImage.jsx';
@@ -577,6 +579,167 @@ function SuccessSale({ sale, onReset }) {
   );
 }
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function NewCustomerModal({ onClose, onSuccess }) {
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [address, setAddress] = useState('');
+  const [creditLimit, setCreditLimit] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError('');
+
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setError('Name is required.');
+      return;
+    }
+    if (trimmedName.length > 150) {
+      setError('Name must be at most 150 characters.');
+      return;
+    }
+
+    const trimmedPhone = phone.trim();
+    if (trimmedPhone.length > 20) {
+      setError('Phone must be at most 20 characters.');
+      return;
+    }
+
+    const trimmedEmail = email.trim();
+    if (trimmedEmail.length > 100) {
+      setError('Email must be at most 100 characters.');
+      return;
+    }
+    if (trimmedEmail && !EMAIL_PATTERN.test(trimmedEmail)) {
+      setError('Enter a valid email address.');
+      return;
+    }
+
+    const trimmedAddress = address.trim();
+    if (trimmedAddress.length > 255) {
+      setError('Address must be at most 255 characters.');
+      return;
+    }
+
+    const creditLimitValue = creditLimit.trim() === '' ? 0 : Number(creditLimit);
+    if (!Number.isFinite(creditLimitValue) || creditLimitValue < 0) {
+      setError('Credit limit must be a non-negative number.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const created = await customerService.create({
+        name: trimmedName,
+        phone: trimmedPhone || null,
+        email: trimmedEmail || null,
+        address: trimmedAddress || null,
+        creditLimit: creditLimitValue,
+      });
+      onSuccess(created);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The customer could not be created.');
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal title="+ New Customer" onClose={onClose}>
+      <form className="form pos-modal-form" onSubmit={handleSubmit} noValidate>
+        <div className="form-field">
+          <label htmlFor="modalCustomerName">Name *</label>
+          <input
+            id="modalCustomerName"
+            type="text"
+            maxLength={150}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Customer name"
+            autoFocus
+            disabled={submitting}
+          />
+        </div>
+
+        <div className="pos-modal-row">
+          <div className="form-field">
+            <label htmlFor="modalCustomerPhone">Phone</label>
+            <input
+              id="modalCustomerPhone"
+              type="text"
+              maxLength={20}
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+              placeholder="e.g. 9876543210"
+              disabled={submitting}
+            />
+          </div>
+
+          <div className="form-field">
+            <label htmlFor="modalCustomerEmail">Email</label>
+            <input
+              id="modalCustomerEmail"
+              type="email"
+              maxLength={100}
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="e.g. customer@example.com"
+              disabled={submitting}
+            />
+          </div>
+        </div>
+
+        <div className="form-field">
+          <label htmlFor="modalCustomerAddress">Address</label>
+          <textarea
+            id="modalCustomerAddress"
+            rows="2"
+            maxLength={255}
+            value={address}
+            onChange={(event) => setAddress(event.target.value)}
+            placeholder="Street address or locality"
+            disabled={submitting}
+          />
+        </div>
+
+        <div className="form-field">
+          <label htmlFor="modalCustomerCreditLimit">Credit Limit</label>
+          <input
+            id="modalCustomerCreditLimit"
+            type="number"
+            min="0"
+            step="0.01"
+            value={creditLimit}
+            onChange={(event) => setCreditLimit(event.target.value)}
+            placeholder="0.00"
+            disabled={submitting}
+          />
+          <p className="field-hint">Optional, non-negative. Limits credit allowed for this customer.</p>
+        </div>
+
+        {error ? (
+          <div className="form-alert" role="alert">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="form-actions">
+          <button type="button" className="btn btn-outline" onClick={onClose} disabled={submitting}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-primary" disabled={submitting}>
+            {submitting ? 'Saving…' : 'Create Customer'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 export default function POSPage() {
   const { t } = useLanguage();
   const { hasPermission } = useAuth();
@@ -602,6 +765,8 @@ export default function POSPage() {
   const [customerInput, setCustomerInput] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
+  const [selectedCustomerData, setSelectedCustomerData] = useState(null);
+  const [isNewCustomerModalOpen, setIsNewCustomerModalOpen] = useState(false);
   const [customerOpen, setCustomerOpen] = useState(false);
   const [customerDropdownStyle, setCustomerDropdownStyle] = useState(null);
 
@@ -719,8 +884,11 @@ export default function POSPage() {
 
   const selectedCustomer = useMemo(() => {
     if (!selectedCustomerId) return null;
+    if (selectedCustomerData && Number(selectedCustomerData.id) === Number(selectedCustomerId)) {
+      return selectedCustomerData;
+    }
     return customerItems.find((customer) => Number(customer.id) === Number(selectedCustomerId)) || null;
-  }, [selectedCustomerId, customerItems]);
+  }, [selectedCustomerId, selectedCustomerData, customerItems]);
 
   // Re-resolve line prices whenever the sale type changes.
   function repriceLines(lines, nextSaleType) {
@@ -905,21 +1073,44 @@ export default function POSPage() {
   function handleCustomerInputChange(event) {
     setCustomerInput(event.target.value);
     setSelectedCustomerId('');
+    setSelectedCustomerData(null);
     setCustomerOpen(true);
   }
 
   function handleSelectCustomer(customer) {
     setSelectedCustomerId(customer.id);
+    setSelectedCustomerData(customer);
     setCustomerInput(`${customer.name}${customer.phone ? ` - ${customer.phone}` : ''}`);
     setCustomerOpen(false);
   }
 
   function handleClearCustomer() {
     setSelectedCustomerId('');
+    setSelectedCustomerData(null);
     setCustomerInput('');
     setCustomerSearch('');
     setCustomerOpen(false);
     customerRef.current?.focus();
+  }
+
+  function handleCustomerCreated(created) {
+    setIsNewCustomerModalOpen(false);
+    const formatted = {
+      id: Number(created.id),
+      name: created.name,
+      phone: created.phone || null,
+      email: created.email || null,
+      address: created.address || null,
+      state: created.state || null,
+      creditLimit: Number(created.credit_limit ?? created.creditLimit ?? 0),
+      currentBalance: Number(created.current_balance ?? created.currentBalance ?? 0),
+      status: created.status || 'active',
+    };
+    handleSelectCustomer(formatted);
+    if (typeof customers.refetch === 'function') {
+      customers.refetch();
+    }
+    showToast(`Customer "${formatted.name}" created and selected.`, 'success');
   }
 
   function handlePaymentChange(index, patch) {
@@ -1043,6 +1234,8 @@ export default function POSPage() {
     setCompletedSale(null);
     setCart([]);
     setSelectedCustomerId('');
+    setSelectedCustomerData(null);
+    setIsNewCustomerModalOpen(false);
     setCustomerInput('');
     setCustomerSearch('');
     setCustomerOpen(false);
@@ -1273,134 +1466,145 @@ export default function POSPage() {
         </section>
 
         <section className="pos-panel pos-checkout-pane" aria-label="Sale checkout" ref={checkoutPaneRef}>
-          <div className="pos-panel-head">
-            <h2 className="card-title">{t('pos.newSale')}</h2>
-            <span className="card-caption">
-              {preview.intra ? t('pos.intraState') : t('pos.interState')}
-            </span>
-          </div>
+          <div className="pos-checkout-top">
+            <div className="pos-panel-head">
+              <h2 className="card-title">{t('pos.newSale')}</h2>
+              <span className="card-caption">
+                {preview.intra ? t('pos.intraState') : t('pos.interState')}
+              </span>
+            </div>
 
-          <div className="pos-section" ref={customerSectionRef}>
-            <div className="pos-section-head">
-              <h3 className="card-title">{t('pos.customer')}</h3>
-              <button
-                type="button"
-                className="btn btn-outline btn-sm"
-                onClick={handleClearCustomer}
-                disabled={!selectedCustomerId}
-              >
-                {t('pos.walkIn')}
-              </button>
+            <div className="pos-section" ref={customerSectionRef}>
+              <div className="pos-section-head">
+                <h3 className="card-title">{t('pos.customer')}</h3>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={handleClearCustomer}
+                  disabled={!selectedCustomerId}
+                >
+                  {t('pos.walkIn')}
+                </button>
+              </div>
+
+              {selectedCustomer ? (
+                <>
+                  <div className="pos-selected-customer">
+                    <div className="pos-selected-customer-info">
+                      <span className="cell-main">
+                        {selectedCustomer.name}{' '}
+                        <span className="pos-selected-badge">✓ {t('pos.selected')}</span>
+                      </span>
+                      <span className="cell-sub">
+                        {[selectedCustomer.phone, selectedCustomer.email].filter(Boolean).join(' · ') || '—'}
+                      </span>
+                    </div>
+                    <button type="button" className="btn btn-outline btn-sm" onClick={handleClearCustomer}>
+                      {t('pos.change')}
+                    </button>
+                  </div>
+                  <p className="pos-muted">
+                    {t('pos.customerState')}: {selectedCustomer.state || '—'}
+                  </p>
+                </>
+              ) : (
+                <div className="form-field">
+                  <label htmlFor="pos-customer-search">{t('pos.searchCustomer')}</label>
+                  <div className="pos-customer-input-group">
+                    <input
+                      ref={customerRef}
+                      id="pos-customer-search"
+                      type="search"
+                      value={customerInput}
+                      onChange={handleCustomerInputChange}
+                      placeholder={t('pos.searchCustomerPlaceholder')}
+                      autoComplete="off"
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm pos-new-customer-btn"
+                      onClick={() => setIsNewCustomerModalOpen(true)}
+                    >
+                      + New Customer
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {!selectedCustomer && customerDropdownStyle ? (
+                <div
+                  className="pos-customer-dropdown"
+                  style={customerDropdownStyle}
+                  role="listbox"
+                  aria-label={t('pos.searchCustomer')}
+                >
+                  {customers.loading ? (
+                    <div className="pos-customer-dropdown-status">{t('common.searching')}</div>
+                  ) : customers.error ? (
+                    <div className="pos-customer-dropdown-status">{customers.error.message}</div>
+                  ) : customerItems.length === 0 ? (
+                    <div className="pos-customer-dropdown-status">{t('pos.noCustomersFound')}</div>
+                  ) : (
+                    customerItems.map((customer) => (
+                      <button
+                        key={customer.id}
+                        type="button"
+                        role="option"
+                        className="pos-customer-option"
+                        onClick={() => handleSelectCustomer(customer)}
+                      >
+                        <span className="cell-main">{customer.name}</span>
+                        <span className="cell-sub">
+                          {[customer.phone, customer.email].filter(Boolean).join(' · ') || ''}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              ) : null}
             </div>
 
             {selectedCustomer ? (
-              <>
-                <div className="pos-selected-customer">
-                  <div className="pos-selected-customer-info">
-                    <span className="cell-main">
-                      {selectedCustomer.name}{' '}
-                      <span className="pos-selected-badge">✓ {t('pos.selected')}</span>
-                    </span>
-                    <span className="cell-sub">
-                      {[selectedCustomer.phone, selectedCustomer.email].filter(Boolean).join(' · ') || '—'}
+              <div className={`pos-credit-card${creditOverLimit ? ' is-over' : ''}`}>
+                <div className="pos-section-head">
+                  <h3 className="card-title">{t('pos.credit')}</h3>
+                </div>
+                <div className="pos-credit-grid">
+                  <div className="pos-credit-item">
+                    <span className="pos-credit-label">{t('pos.creditLimit')}</span>
+                    <span className="pos-credit-value">
+                      <Money value={selectedCustomerCreditLimit} />
                     </span>
                   </div>
-                  <button type="button" className="btn btn-outline btn-sm" onClick={handleClearCustomer}>
-                    {t('pos.change')}
-                  </button>
+                  <div className="pos-credit-item">
+                    <span className="pos-credit-label">{t('pos.currentOutstanding')}</span>
+                    <span className="pos-credit-value">
+                      <Money value={selectedCustomerOutstanding} />
+                    </span>
+                  </div>
+                  <div className="pos-credit-item">
+                    <span className="pos-credit-label">{t('pos.newCredit')}</span>
+                    <span className="pos-credit-value">
+                      <Money value={newCreditAmount} />
+                    </span>
+                  </div>
+                  <div className="pos-credit-item">
+                    <span className="pos-credit-label">{t('pos.availableCredit')}</span>
+                    <span className={`pos-credit-value${creditOverLimit ? ' tone-danger' : ''}`}>
+                      <Money value={availableCreditAmount} />
+                    </span>
+                  </div>
                 </div>
-                <p className="pos-muted">
-                  {t('pos.customerState')}: {selectedCustomer.state || '—'}
-                </p>
-              </>
-            ) : (
-              <div className="form-field">
-                <label htmlFor="pos-customer-search">{t('pos.searchCustomer')}</label>
-                <input
-                  ref={customerRef}
-                  id="pos-customer-search"
-                  type="search"
-                  value={customerInput}
-                  onChange={handleCustomerInputChange}
-                  placeholder={t('pos.searchCustomerPlaceholder')}
-                  autoComplete="off"
-                />
-              </div>
-            )}
-
-            {!selectedCustomer && customerDropdownStyle ? (
-              <div
-                className="pos-customer-dropdown"
-                style={customerDropdownStyle}
-                role="listbox"
-                aria-label={t('pos.searchCustomer')}
-              >
-                {customers.loading ? (
-                  <div className="pos-customer-dropdown-status">{t('common.searching')}</div>
-                ) : customers.error ? (
-                  <div className="pos-customer-dropdown-status">{customers.error.message}</div>
-                ) : customerItems.length === 0 ? (
-                  <div className="pos-customer-dropdown-status">{t('pos.noCustomersFound')}</div>
-                ) : (
-                  customerItems.map((customer) => (
-                    <button
-                      key={customer.id}
-                      type="button"
-                      role="option"
-                      className="pos-customer-option"
-                      onClick={() => handleSelectCustomer(customer)}
-                    >
-                      <span className="cell-main">{customer.name}</span>
-                      <span className="cell-sub">
-                        {[customer.phone, customer.email].filter(Boolean).join(' · ') || ''}
-                      </span>
-                    </button>
-                  ))
-                )}
+                {selectedCustomerCreditLimit === 0 ? (
+                  <p className="pos-muted-warn">{t('pos.noCreditAllowed')}</p>
+                ) : creditOverLimit ? (
+                  <p className="pos-muted-warn">{t('pos.creditLimitExceeded')}</p>
+                ) : null}
               </div>
             ) : null}
           </div>
 
-          {selectedCustomer ? (
-            <div className={`pos-credit-card${creditOverLimit ? ' is-over' : ''}`}>
-              <div className="pos-section-head">
-                <h3 className="card-title">{t('pos.credit')}</h3>
-              </div>
-              <div className="pos-credit-grid">
-                <div className="pos-credit-item">
-                  <span className="pos-credit-label">{t('pos.creditLimit')}</span>
-                  <span className="pos-credit-value">
-                    <Money value={selectedCustomerCreditLimit} />
-                  </span>
-                </div>
-                <div className="pos-credit-item">
-                  <span className="pos-credit-label">{t('pos.currentOutstanding')}</span>
-                  <span className="pos-credit-value">
-                    <Money value={selectedCustomerOutstanding} />
-                  </span>
-                </div>
-                <div className="pos-credit-item">
-                  <span className="pos-credit-label">{t('pos.newCredit')}</span>
-                  <span className="pos-credit-value">
-                    <Money value={newCreditAmount} />
-                  </span>
-                </div>
-                <div className="pos-credit-item">
-                  <span className="pos-credit-label">{t('pos.availableCredit')}</span>
-                  <span className={`pos-credit-value${creditOverLimit ? ' tone-danger' : ''}`}>
-                    <Money value={availableCreditAmount} />
-                  </span>
-                </div>
-              </div>
-              {selectedCustomerCreditLimit === 0 ? (
-                <p className="pos-muted-warn">{t('pos.noCreditAllowed')}</p>
-              ) : creditOverLimit ? (
-                <p className="pos-muted-warn">{t('pos.creditLimitExceeded')}</p>
-              ) : null}
-            </div>
-          ) : null}
-
-          <div className="pos-section">
+          <div className="pos-section pos-cart-section">
             <div className="pos-section-head">
               <h3 className="card-title">{t('pos.cart')}</h3>
               <span className="card-caption">{t('pos.lines', { count: cart.length })}</span>
@@ -1424,191 +1628,200 @@ export default function POSPage() {
             )}
 
             {selectedCustomer || owesMoney ? null : (
-              <p className="pos-muted">{t('pos.walkInSalesNeedNoCustomer')}</p>
+              <p className="pos-muted" style={{ margin: 0, fontSize: 12 }}>{t('pos.walkInSalesNeedNoCustomer')}</p>
             )}
           </div>
 
-          <div className="pos-section">
-            <div className="pos-section-head">
-              <h3 className="card-title">{t('pos.totalsDiscount')}</h3>
-            </div>
-            <div className="summary-grid pos-totals">
-              <div className="summary-item">
-                <span className="summary-label">{t('pos.subtotal')}</span>
-                <span className="summary-value">
-                  <Money value={preview.subtotal} />
-                </span>
+          <div className="pos-checkout-footer">
+            <div className="pos-section">
+              <div className="pos-section-head">
+                <h3 className="card-title">{t('pos.totalsDiscount')}</h3>
               </div>
-              <div className="summary-item">
-                <span className="summary-label">{t('pos.estimatedTotal')}</span>
-                <span className="summary-value tone-success">
-                  <Money value={preview.total} />
-                </span>
-              </div>
-            </div>
-
-            <div className="form-field pos-discount">
-              <label htmlFor="pos-discount">{t('pos.discount')}</label>
-              <input
-                ref={discountRef}
-                id="pos-discount"
-                type="number"
-                min="0"
-                step="0.01"
-                inputMode="decimal"
-                value={discount}
-                onChange={(event) => setDiscount(event.target.value)}
-                placeholder="0.00"
-              />
-              {discountInvalid ? <span className="field-error">{t('pos.discountInvalid')}</span> : null}
-              {discountTooHigh ? <span className="field-error">{t('pos.discountExceedsSubtotal')}</span> : null}
-            </div>
-
-            {preview.taxAmount > 0 ? (
-              <div className="pos-gst-preview">
-                <div className="pos-gst-head">
-                  <span>{t('pos.taxPreview')}</span>
-                  <Money value={preview.taxAmount} />
+              <div className="summary-grid pos-totals">
+                <div className="summary-item">
+                  <span className="summary-label">{t('pos.subtotal')}</span>
+                  <span className="summary-value">
+                    <Money value={preview.subtotal} />
+                  </span>
                 </div>
-                {preview.intra ? (
-                  <div className="pos-gst-parts">
-                    <span>
-                      {t('invoice.cgst')} <Money value={preview.cgst} />
-                    </span>
-                    <span>
-                      {t('invoice.sgst')} <Money value={preview.sgst} />
-                    </span>
-                  </div>
-                ) : (
-                  <div className="pos-gst-parts">
-                    <span>
-                      {t('invoice.igst')} <Money value={preview.igst} />
-                    </span>
-                  </div>
-                )}
-                <p className="pos-note">{t('pos.taxIncludedPreview')}</p>
+                <div className="summary-item">
+                  <span className="summary-label">{t('pos.estimatedTotal')}</span>
+                  <span className="summary-value tone-success">
+                    <Money value={preview.total} />
+                  </span>
+                </div>
               </div>
-            ) : null}
-          </div>
 
-          <div className="pos-section">
-            <div className="pos-section-head">
-              <h3 className="card-title">{t('pos.payment')}</h3>
-              {paymentMode === PAYMENT_MODES.split ? (
-                <button
-                  type="button"
-                  className="btn btn-outline btn-sm"
-                  onClick={handleAddPayment}
-                  disabled={paymentRows.length >= PAYMENT_MAX}
-                >
-                  {t('pos.addPayment')}
-                </button>
+              <div className="form-field pos-discount">
+                <label htmlFor="pos-discount">{t('pos.discount')}</label>
+                <input
+                  ref={discountRef}
+                  id="pos-discount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={discount}
+                  onChange={(event) => setDiscount(event.target.value)}
+                  placeholder="0.00"
+                />
+                {discountInvalid ? <span className="field-error">{t('pos.discountInvalid')}</span> : null}
+                {discountTooHigh ? <span className="field-error">{t('pos.discountExceedsSubtotal')}</span> : null}
+              </div>
+
+              {preview.taxAmount > 0 ? (
+                <div className="pos-gst-preview">
+                  <div className="pos-gst-head">
+                    <span>{t('pos.taxPreview')}</span>
+                    <Money value={preview.taxAmount} />
+                  </div>
+                  {preview.intra ? (
+                    <div className="pos-gst-parts">
+                      <span>
+                        {t('invoice.cgst')} <Money value={preview.cgst} />
+                      </span>
+                      <span>
+                        {t('invoice.sgst')} <Money value={preview.sgst} />
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="pos-gst-parts">
+                      <span>
+                        {t('invoice.igst')} <Money value={preview.igst} />
+                      </span>
+                    </div>
+                  )}
+                  <p className="pos-note">{t('pos.taxIncludedPreview')}</p>
+                </div>
               ) : null}
             </div>
 
-            <div className="pos-payment-modes" role="group" aria-label={t('pos.paymentMode')}>
-              <span className="pos-payment-mode-label">{t('pos.paymentMode')}</span>
-              <div className="pos-payment-mode-options">
-                {[
-                  [PAYMENT_MODES.full, 'fullPayment'],
-                  [PAYMENT_MODES.partial, 'partialCredit'],
-                  [PAYMENT_MODES.credit, 'fullCredit'],
-                  [PAYMENT_MODES.split, 'splitPayment'],
-                ].map(([mode, labelKey]) => (
+            <div className="pos-section">
+              <div className="pos-section-head">
+                <h3 className="card-title">{t('pos.payment')}</h3>
+                {paymentMode === PAYMENT_MODES.split ? (
                   <button
-                    key={mode}
                     type="button"
-                    className={`pos-payment-mode${paymentMode === mode ? ' is-selected' : ''}`}
-                    onClick={() => handlePaymentModeChange(mode)}
-                    aria-pressed={paymentMode === mode}
+                    className="btn btn-outline btn-sm"
+                    onClick={handleAddPayment}
+                    disabled={paymentRows.length >= PAYMENT_MAX}
                   >
-                    {t(`pos.${labelKey}`)}
+                    {t('pos.addPayment')}
                   </button>
-                ))}
+                ) : null}
+              </div>
+
+              <div className="pos-payment-modes" role="group" aria-label={t('pos.paymentMode')}>
+                <span className="pos-payment-mode-label">{t('pos.paymentMode')}</span>
+                <div className="pos-payment-mode-options">
+                  {[
+                    [PAYMENT_MODES.full, 'fullPayment'],
+                    [PAYMENT_MODES.partial, 'partialCredit'],
+                    [PAYMENT_MODES.credit, 'fullCredit'],
+                    [PAYMENT_MODES.split, 'splitPayment'],
+                  ].map(([mode, labelKey]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={`pos-payment-mode${paymentMode === mode ? ' is-selected' : ''}`}
+                      onClick={() => handlePaymentModeChange(mode)}
+                      aria-pressed={paymentMode === mode}
+                    >
+                      {t(`pos.${labelKey}`)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {paymentRows.length === 0 ? (
+                <p className="pos-muted">{t('pos.noPaymentRecordedCredit')}</p>
+              ) : (
+                <div className="pos-payments">
+                  {paymentRows.map((payment, index) => (
+                    <PaymentRow
+                      key={index}
+                      payment={payment}
+                      index={index}
+                      onChange={handlePaymentChange}
+                      onRemove={handleRemovePayment}
+                      canRemove={paymentRows.length > 1}
+                      usedMethods={paymentRows.map((row) => row.method)}
+                    />
+                  ))}
+                </div>
+              )}
+
+              <div className="summary-grid pos-totals">
+                <div className="summary-item">
+                  <span className="summary-label">{t('pos.amountPaid')}</span>
+                  <span className="summary-value">
+                    <Money value={paidTotal} />
+                  </span>
+                </div>
+                <div className="summary-item">
+                  <span className="summary-label">{t('pos.credit')}</span>
+                  <span className="summary-value">
+                    <Money value={newCreditAmount} />
+                  </span>
+                </div>
+                <div className="summary-item">
+                  <span className="summary-label">{t('pos.balanceDue')}</span>
+                  <span className={`summary-value${paymentOverTotal ? ' tone-danger' : ''}`}>
+                    <Money value={balanceDue} />
+                  </span>
+                </div>
+              </div>
+
+              {paymentOverTotal ? (
+                <p className="field-error">{t('pos.paymentsCannotExceed', { total: formatMoney(preview.total) })}</p>
+              ) : null}
+              {creditRowMismatch ? (
+                <p className="field-error">{t('pos.creditPaymentMustMatchBalance')}</p>
+              ) : null}
+              {paymentRows.length > 0 && !paymentOverTotal && owesMoney ? (
+                <p className="pos-muted-warn">{t('pos.partialSaleNotice', { type: paidTotal === 0 ? t('pos.credit') : t('pos.partial') })}</p>
+              ) : null}
+              {creditRequired && !selectedCustomerId ? (
+                <p className="field-error">{t('pos.customerRequiredForCredit')}</p>
+              ) : creditRequired && !hasPermission('credit.create') ? (
+                <p className="field-error">{t('pos.noCreditPermission')}</p>
+              ) : creditLimitBlocked ? (
+                <p className="field-error">{t('pos.creditLimitExceeded')}</p>
+              ) : null}
+            </div>
+
+            {submitError ? (
+              <div className="form-alert pos-submit-error" role="alert">
+                {submitError}
+              </div>
+            ) : null}
+
+            <div className="pos-type-row">
+              <div className={`sale-type-badge ${saleType}`}>
+                {t('pos.saleTypeLabel')}: {saleType === 'retail' ? t('pos.retail') : t('pos.wholesale')}
               </div>
             </div>
 
-            {paymentRows.length === 0 ? (
-              <p className="pos-muted">{t('pos.noPaymentRecordedCredit')}</p>
-            ) : (
-              <div className="pos-payments">
-                {paymentRows.map((payment, index) => (
-                  <PaymentRow
-                    key={index}
-                    payment={payment}
-                    index={index}
-                    onChange={handlePaymentChange}
-                    onRemove={handleRemovePayment}
-                    canRemove={paymentRows.length > 1}
-                    usedMethods={paymentRows.map((row) => row.method)}
-                  />
-                ))}
-              </div>
-            )}
-
-            <div className="summary-grid pos-totals">
-              <div className="summary-item">
-                <span className="summary-label">{t('pos.amountPaid')}</span>
-                <span className="summary-value">
-                  <Money value={paidTotal} />
-                </span>
-              </div>
-              <div className="summary-item">
-                <span className="summary-label">{t('pos.credit')}</span>
-                <span className="summary-value">
-                  <Money value={newCreditAmount} />
-                </span>
-              </div>
-              <div className="summary-item">
-                <span className="summary-label">{t('pos.balanceDue')}</span>
-                <span className={`summary-value${paymentOverTotal ? ' tone-danger' : ''}`}>
-                  <Money value={balanceDue} />
-                </span>
-              </div>
-            </div>
-
-            {paymentOverTotal ? (
-              <p className="field-error">{t('pos.paymentsCannotExceed', { total: formatMoney(preview.total) })}</p>
-            ) : null}
-            {creditRowMismatch ? (
-              <p className="field-error">{t('pos.creditPaymentMustMatchBalance')}</p>
-            ) : null}
-            {paymentRows.length > 0 && !paymentOverTotal && owesMoney ? (
-              <p className="pos-muted-warn">{t('pos.partialSaleNotice', { type: paidTotal === 0 ? t('pos.credit') : t('pos.partial') })}</p>
-            ) : null}
-            {creditRequired && !selectedCustomerId ? (
-              <p className="field-error">{t('pos.customerRequiredForCredit')}</p>
-            ) : creditRequired && !hasPermission('credit.create') ? (
-              <p className="field-error">{t('pos.noCreditPermission')}</p>
-            ) : creditLimitBlocked ? (
-              <p className="field-error">{t('pos.creditLimitExceeded')}</p>
-            ) : null}
+            <button
+              ref={completeRef}
+              type="button"
+              className="btn btn-primary btn-block pos-complete"
+              onClick={handleComplete}
+              disabled={!canSubmit}
+              aria-busy={submitting}
+            >
+              {submitting ? t('pos.completingSale') : t('pos.completeSale')} (F8)
+            </button>
           </div>
-
-          {submitError ? (
-            <div className="form-alert pos-submit-error" role="alert">
-              {submitError}
-            </div>
-          ) : null}
-
-          <div className="pos-type-row">
-            <div className={`sale-type-badge ${saleType}`}>
-              {t('pos.saleTypeLabel')}: {saleType === 'retail' ? t('pos.retail') : t('pos.wholesale')}
-            </div>
-          </div>
-
-          <button
-            ref={completeRef}
-            type="button"
-            className="btn btn-primary btn-block pos-complete"
-            onClick={handleComplete}
-            disabled={!canSubmit}
-            aria-busy={submitting}
-          >
-            {submitting ? t('pos.completingSale') : t('pos.completeSale')} (F8)
-          </button>
         </section>
       </div>
+
+      {isNewCustomerModalOpen ? (
+        <NewCustomerModal
+          onClose={() => setIsNewCustomerModalOpen(false)}
+          onSuccess={handleCustomerCreated}
+        />
+      ) : null}
     </div>
   );
 }

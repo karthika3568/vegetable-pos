@@ -47,6 +47,8 @@ export default function MainLayout() {
 
   const closeNav = useCallback(() => setMobileNavOpen(false), []);
 
+  const isPos = location.pathname === '/pos';
+
   return (
     <div className="app-shell">
       <Sidebar
@@ -56,9 +58,9 @@ export default function MainLayout() {
       />
 
       <div className={sidebarCollapsed ? 'app-content sidebar-collapsed' : 'app-content'}>
-        <Header menuOpen={menuOpen} onMenuToggle={toggleNavigationExplicit} isPos={false} isMobile={isMobile} />
+        <Header menuOpen={menuOpen} onMenuToggle={toggleNavigationExplicit} isPos={isPos} isMobile={isMobile} />
 
-        <div className="app-main">
+        <div className={`app-main${isPos ? ' is-pos' : ''}`}>
           <main className="page-content">
             <Outlet />
           </main>

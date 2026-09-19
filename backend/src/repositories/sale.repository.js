@@ -394,7 +394,40 @@ const [saleResult] = await connection.query(
     );
     const saleId = saleResult.insertId;
 
-    const invoiceNumber = `${invoicePrefix}${saleId}`;
+    // Allocate the next gap-free invoice number for this prefix. The
+    // SELECT ... FOR UPDATE locks the counter row (inside the same
+    // transaction that already locked stock above), so two cashiers can
+    // never be given the same number; we then UPDATE next_invoice and
+    // write the final number right here - same transaction, so a failed /
+    // rolled-back sale never burns a number (INV-001, INV-002, ... stay
+    // contiguous for the prefix).
+    const prefix = String(invoicePrefix ?? '').trim();
+    if (!prefix) {
+      throw ApiError.internal('invoice_prefix is not configured');
+    }
+    const [seqRow] = await connection.query(
+      `SELECT next_invoice
+       FROM invoice_sequencens
+       WHERE prefix = ?
+       FOR UPDATE`,
+      [prefix]
+    );
+    const nextInvoice =
+      seqRow.length > 0 ? Number(seqRow[0].next_invoice) : 1;
+    if (seqRow.length === 0) {
+      await connection.query(
+        `INSERT INTO invoice_sequencens (prefix, next_invoice) VALUES (?, ?)`,
+        [prefix, nextInvoice + 1]
+      );
+    } else {
+      await connection.query(
+        `UPDATE invoice_sequencens
+            SET next_invoice = next_invoice + 1
+          WHERE prefix = ?`,
+        [prefix]
+      );
+    }
+    const invoiceNumber = `${prefix}${String(nextInvoice).padStart(3, '0')}`;
     await connection.query(
       `UPDATE sales SET invoice_number = ? WHERE id = ?`,
       [invoiceNumber, saleId]

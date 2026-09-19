@@ -1708,37 +1708,8 @@ a:focus-visible {
 }
 
 /* ------------------------------------------------------------
-   Neutralize legacy POS-specific full-width rules
-   Ensure /pos uses the normal app layout and header
+   POS layout rules are defined in the Dedicated POS Section
    ------------------------------------------------------------ */
-
-.app-main.is-pos {
-  /* keep same behaviour as normal app-main */
-  flex: 1 !important;
-  height: auto !important;
-  min-height: 0 !important;
-  overflow: visible !important;
-}
-
-.app-main.is-pos .page-content {
-  padding: 20px 24px 40px !important;
-  display: block !important;
-  min-height: 0 !important;
-  overflow: visible !important;
-}
-
-.is-pos-header {
-  height: var(--header-height) !important;
-}
-
-.is-pos-header .header-search,
-.is-pos-header .page-title-pill {
-  display: inline-flex !important;
-}
-
-.is-pos-header .shop-name {
-  font-size: 16px !important;
-}
 
 .quick-action {
   display: flex;
@@ -2610,33 +2581,40 @@ a:focus-visible {
 
 /* Full-height POS: only the inner panes scroll, never the page. */
 .app-main.is-pos {
-  flex: none;
-  height: calc(100dvh - var(--header-height));
+  flex: 1;
+  height: calc(100dvh - 58px);
+  max-height: calc(100dvh - 58px);
   min-height: 0;
   overflow: hidden;
 }
 
 .app-main.is-pos .page-content {
-  padding: 0;
+  padding: 12px 18px 14px;
   display: flex;
   flex-direction: column;
+  flex: 1;
   min-height: 0;
+  height: 100%;
   overflow: hidden;
 }
 
 .pos-page {
   flex: 1;
   min-height: 0;
+  height: 100%;
+  max-height: 100%;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .pos-grid {
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(360px, 2fr);
-  gap: 18px;
+  grid-template-columns: minmax(0, 3fr) minmax(380px, 2fr);
+  gap: 16px;
   flex: 1;
   min-height: 0;
+  height: 100%;
   align-items: stretch;
 }
 
@@ -2645,12 +2623,13 @@ a:focus-visible {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
-  padding: 16px;
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   max-height: 100%;
   overflow: hidden;
 }
@@ -2668,6 +2647,13 @@ a:focus-visible {
   font-size: 14px;
 }
 
+.pos-products-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .pos-products-scroll {
   flex: 1;
   min-height: 0;
@@ -2679,8 +2665,85 @@ a:focus-visible {
 }
 
 .pos-checkout-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: 8px;
+}
+
+.pos-checkout-top {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pos-cart-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  margin-top: 2px;
+}
+
+.pos-cart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding-bottom: 12px;
+  padding-right: 2px;
+}
+
+.pos-checkout-footer {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 8px;
+  margin-top: auto;
+}
+
+.pos-customer-input-group {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.pos-customer-input-group input {
+  flex: 1;
+  min-width: 0;
+}
+
+.pos-new-customer-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pos-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pos-modal-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 480px) {
+  .pos-modal-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 .pos-scan-row {
@@ -3447,25 +3510,46 @@ a:focus-visible {
 @media (max-width: 1100px) {
   .app-main.is-pos {
     height: auto;
+    max-height: none;
     overflow: visible;
   }
 
   .app-main.is-pos .page-content {
     height: auto;
     padding: 18px;
+    overflow: visible;
   }
 
   .pos-page {
     height: auto;
+    max-height: none;
+    overflow: visible;
   }
 
   .pos-grid {
     grid-template-columns: 1fr;
+    height: auto;
     align-items: stretch;
   }
 
   .pos-panel {
+    height: auto;
     max-height: none;
+    overflow: visible;
+  }
+
+  .pos-checkout-pane {
+    height: auto;
+    overflow: visible;
+  }
+
+  .pos-cart-section {
+    overflow: visible;
+  }
+
+  .pos-cart {
+    max-height: 350px;
+    overflow-y: auto;
   }
 }
 
