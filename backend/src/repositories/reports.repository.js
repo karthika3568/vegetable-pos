@@ -669,8 +669,109 @@ async function suppliersReport({ fromDate, toDate, search, orderBy, limit, offse
   });
 }
 
+// ---------------------------------------------------------------------
+// SALES ITEMS (line-item detail)
+// Every sold line carries its frozen unit_price, exact sale DATETIME,
+// the sale's customer and the cashier/employee who recorded it, plus the
+// product and its category. line_total is the STORED generated column
+// (quantity * unit_price - discount_amount) so nothing here can drift
+// from what was printed on the invoice at sale time.
+// ---------------------------------------------------------------------
+async function salesItemsReport({ fromDate, toDateExclusive, employeeId, customerId, categoryId, productId, paymentType, status, search, orderBy, limit, offset }) {
+  return snapshot(async (conn) => {
+    const where = ['s.sale_date >= ?', 's.sale_date < ?'];
+    const params = [fromDate, toDateExclusive];
+
+    if (employeeId) {
+      where.push('s.created_by = ?');
+      params.push(employeeId);
+    }
+    if (customerId) {
+      where.push('s.customer_id = ?');
+      params.push(customerId);
+    }
+    if (categoryId) {
+      where.push('p.category_id = ?');
+      params.push(categoryId);
+    }
+    if (productId) {
+      where.push('si.product_id = ?');
+      params.push(productId);
+    }
+    if (paymentType) {
+      where.push('s.payment_type = ?');
+      params.push(paymentType);
+    }
+    if (status) {
+      where.push('s.status = ?');
+      params.push(status);
+    }
+    if (search) {
+      where.push(`(s.invoice_number LIKE ? OR COALESCE(c.name, '') LIKE ? OR p.name LIKE ? OR u.username LIKE ?)`);
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    }
+    const whereSql = `WHERE ${where.join(' AND ')}`;
+
+    // Summary (full date window - never scoped by row filters).
+    const [[summary]] = await conn.query(
+      `SELECT
+         COALESCE(COUNT(si.id), 0) AS total_lines,
+         COALESCE(SUM(si.quantity), 0) AS total_quantity,
+         COALESCE(SUM(CASE WHEN s.status = 'completed' THEN si.line_total ELSE 0 END), 0) AS gross_revenue,
+         COALESCE(SUM(CASE WHEN s.status = 'completed' THEN si.discount_amount ELSE 0 END), 0) AS total_discount,
+         COALESCE(SUM(CASE WHEN s.status = 'completed' THEN (si.cgst_amount + si.sgst_amount + si.igst_amount) ELSE 0 END), 0) AS total_tax,
+         COALESCE(COUNT(DISTINCT CASE WHEN s.status = 'cancelled' THEN si.sale_id END), 0) AS cancelled_sales,
+         COALESCE(COUNT(DISTINCT CASE WHEN s.status = 'returned' THEN si.sale_id END), 0) AS returned_sales
+       FROM sale_items si
+       JOIN sales s ON s.id = si.sale_id
+       JOIN products p ON p.id = si.product_id
+       LEFT JOIN customers c ON c.id = s.customer_id
+       LEFT JOIN users u ON u.id = s.created_by
+       ${whereSql}`,
+      params
+    );
+
+    const [[{ total }]] = await conn.query(
+      `SELECT COUNT(*) AS total
+       FROM sale_items si
+       JOIN sales s ON s.id = si.sale_id
+       JOIN products p ON p.id = si.product_id
+       LEFT JOIN customers c ON c.id = s.customer_id
+       LEFT JOIN users u ON u.id = s.created_by
+       ${whereSql}`,
+      params
+    );
+
+    const [rows] = await conn.query(
+      `SELECT
+         si.id, si.sale_id, s.invoice_number,
+         s.sale_date, s.payment_type, s.status,
+         s.customer_id, COALESCE(c.name, 'Walk-in Customer') AS customer_name,
+         u.id AS employee_id, u.username AS employee_name,
+         si.product_id, p.name AS product_name, p.sku,
+         p.category_id, COALESCE(cat.name, '—') AS category_name,
+         si.quantity, si.unit_price, si.discount_amount,
+         (si.cgst_amount + si.sgst_amount + si.igst_amount) AS tax_amount,
+         si.line_total
+       FROM sale_items si
+       JOIN sales s ON s.id = si.sale_id
+       JOIN products p ON p.id = si.product_id
+       LEFT JOIN categories cat ON cat.id = p.category_id
+       LEFT JOIN customers c ON c.id = s.customer_id
+       LEFT JOIN users u ON u.id = s.created_by
+       ${whereSql}
+       ORDER BY ${orderBy}
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
+
+    return { summary, rows, total };
+  });
+}
+
 module.exports = {
   salesReport,
+  salesItemsReport,
   purchasesReport,
   expenseIncomeReport,
   stockReport,

@@ -252,6 +252,12 @@ async function receive(id, { receivedDate, items: lines, createdBy }) {
       throw ApiError.badRequest('each item damagedQuantity must be a non-negative number');
     }
 
+    if (damagedQuantity > receivedQuantity) {
+      throw ApiError.badRequest(
+        `Damaged quantity ${damagedQuantity} cannot exceed the received quantity ${receivedQuantity} for ${item.product_name}`
+      );
+    }
+
     const remaining = to3(Number(item.remaining_quantity));
     if (receivedQuantity + damagedQuantity > remaining) {
       throw ApiError.badRequest(

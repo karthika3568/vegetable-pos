@@ -83,7 +83,7 @@ ALTER TABLE sale_items
     ADD COLUMN sgst_rate DECIMAL(5,2) NOT NULL DEFAULT 0.00 AFTER cgst_rate;
 
 ALTER TABLE sale_items
-    ADD COLUMN igst_rate DECIMAL(5,2) NOT NULL DEFAULT 0.00 AFTER igst_rate;
+    ADD COLUMN igst_rate DECIMAL(5,2) NOT NULL DEFAULT 0.00 AFTER sgst_rate;
 
 ALTER TABLE sale_items
     ADD COLUMN cgst_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER igst_rate;

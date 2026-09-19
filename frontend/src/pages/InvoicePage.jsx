@@ -76,7 +76,6 @@ function ReceiptRow({ label, value, strong = false, danger = false, className = 
 function InvoiceSheet({ invoice }) {
   const { t } = useLanguage();
   const customer = invoice.customer || null;
-  const returns = invoice.returns ?? [];
   const payments = invoice.payments ?? [];
   const credit = invoice.credit ?? null;
 
@@ -91,22 +90,29 @@ function InvoiceSheet({ invoice }) {
   const interState = igst > 0;
 
   const balanceDue = Number(invoice.balanceDue || 0);
-  const showCreditBalance = balanceDue > 0;
-  const displayPayments = balanceDue > 0
-    ? [...payments, { id: 'credit-balance', method: 'credit', amount: balanceDue, paymentDate: null, receivedByName: null }]
-    : payments;
+  const showCreditSection = Boolean(
+    balanceDue > 0 &&
+      credit &&
+      credit.recorded &&
+      Number(credit.netCredit ?? credit.amount ?? 0) > 0
+  );
 
   const stamp = dateTimeParts(invoice.saleDate);
   const saleTypeLabel = invoice.saleType === 'wholesale' ? t('pos.wholesale') : t('pos.retail');
+  const shopName = shop.shopName || 'Vegetable Shop';
+  const shopAddress = shop.address || shop.shopAddress || '';
+  const shopPhone = shop.phone || shop.shopPhone || '';
+  const shopGstin = shop.gstin || shop.gstIn || '';
 
   let methodLabel = '';
-  if (displayPayments.length > 0) {
-    methodLabel = displayPayments[0].method === 'credit'
+  if (payments.length > 0) {
+    methodLabel = payments[0].method === 'credit'
       ? t('pos.credit')
-      : PAYMENT_METHOD_LABELS[displayPayments[0].method] || displayPayments[0].method;
+      : PAYMENT_METHOD_LABELS[payments[0].method] || payments[0].method;
   } else if (invoice.paymentType) {
     methodLabel = PAYMENT_TYPE_LABELS[invoice.paymentType] || invoice.paymentType;
   }
+
   let paymentLabel = methodLabel || '—';
   if (invoice.paymentType === 'partial') {
     paymentLabel = methodLabel ? `${methodLabel} (${t('pos.partial')})` : t('pos.partial');
@@ -114,250 +120,187 @@ function InvoiceSheet({ invoice }) {
     paymentLabel = t('pos.credit');
   }
 
+  const statusNote = balanceDue > 0
+    ? `Outstanding balance: ${money(balanceDue)}`
+    : '✓ Payment received successfully';
+
   return (
     <div className="receipt">
-      <div className="receipt-head">
-        <div className="receipt-shop">{shop.shopName || t('common.appName')}</div>
-      </div>
-
-      <table className="receipt-meta">
-        <tbody>
-          <tr>
-            <td>{t('invoice.billNo')}</td>
-            <td>{invoice.invoiceNumber}</td>
-          </tr>
-          <tr>
-            <td>{t('invoice.date')}</td>
-            <td>{stamp.date}</td>
-          </tr>
-          <tr>
-            <td>{t('invoice.time')}</td>
-            <td>{stamp.time}</td>
-          </tr>
-          <tr>
-            <td>{t('invoice.type')}</td>
-            <td>{saleTypeLabel}</td>
-          </tr>
-        </tbody>
-      </table>
-
-      <div className="receipt-dotted" />
-
-      <table className="receipt-meta">
-        <tbody>
-          <tr>
-            <td>{t('pos.customer')}</td>
-            <td>{customer ? customer.name : t('common.walkIn')}</td>
-          </tr>
-          {customer?.phone ? (
-            <tr>
-              <td>{t('invoice.mobile')}</td>
-              <td>{customer.phone}</td>
-            </tr>
-          ) : null}
-        </tbody>
-      </table>
-
-      <div className="receipt-dotted" />
-
-      <table className="receipt-meta">
-        <tbody>
-          <tr>
-            <td>{t('pos.status')}</td>
-            <td>{INVOICE_STATUS_LABELS[invoice.status] || invoice.status || '—'}</td>
-          </tr>
-          <tr>
-            <td>{t('pos.paymentType')}</td>
-            <td>{paymentLabel}</td>
-          </tr>
-          <tr>
-            <td>{t('invoice.amountPaid')}</td>
-            <td>{money(invoice.amountPaid)}</td>
-          </tr>
-          {showCreditBalance ? (
-            <tr className="receipt-balanced-row">
-              <td>{t('invoice.creditBalance')}</td>
-              <td>{money(balanceDue)}</td>
-            </tr>
-          ) : null}
-        </tbody>
-      </table>
-
-      <div className="receipt-dotted" />
-
-      {invoice.items && invoice.items.length > 0 ? (
-        <table className="receipt-items">
-          <thead>
-            <tr>
-              <th>{t('pos.items')}</th>
-              <th className="num">{t('pos.qty')}</th>
-              <th className="num">{t('invoice.rate')}</th>
-              <th className="num">{t('pos.amount')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {invoice.items.map((item, index) => (
-              <tr key={item.productId ?? index}>
-                <td className="receipt-item-name">
-                  {index + 1}. {item.productName}
-                  {item.productCode ? <span className="receipt-sub"> [{item.productCode}]</span> : null}
-                </td>
-                <td className="num">
-                  {formatQuantity(item.quantity)}
-                  {item.unit ? ` ${item.unit}` : ''}
-                </td>
-                <td className="num">
-                  {item.mrp != null && Number(item.mrp) > 0 ? (
-                    <span className="receipt-mrp">{money(item.mrp)}</span>
-                  ) : null}
-                  {money(item.unitPrice)}
-                </td>
-                <td className="num">{money(item.lineTotal)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : null}
-
-      <div className="receipt-dotted" />
-
-      <div className="receipt-totals">
-        <ReceiptRow label={t('pos.subtotal')} value={money(invoice.subtotal)} />
-        {Number(invoice.discountAmount) > 0 ? (
-          <ReceiptRow label={t('pos.discount')} value={`−${money(invoice.discountAmount)}`} />
-        ) : null}
-        {hasGst && interState ? (
-          <>
-            <ReceiptRow label={t('invoice.igst')} value={money(igst)} />
-            <ReceiptRow label={t('invoice.gstTotal')} value={money(invoice.taxAmount)} />
-          </>
-        ) : null}
-        {hasGst && !interState ? (
-          <>
-            {cgst > 0 ? <ReceiptRow label={t('invoice.cgst')} value={money(cgst)} /> : null}
-            {sgst > 0 ? <ReceiptRow label={t('invoice.sgst')} value={money(sgst)} /> : null}
-            <ReceiptRow label={t('invoice.gstTotal')} value={money(invoice.taxAmount)} />
-          </>
-        ) : null}
-        <div className="receipt-total-sep" />
-        <ReceiptRow label={t('pos.total')} value={money(invoice.totalAmount)} strong />
-        <div className="receipt-total-sep" />
-        <ReceiptRow label={t('pos.paid')} value={money(invoice.amountPaid)} />
-        {showCreditBalance ? (
-          <ReceiptRow label={t('invoice.creditBalance')} value={money(balanceDue)} danger />
-        ) : null}
-      </div>
-
-      {displayPayments.length > 0 ? (
-        <div className="receipt-section">
-          <div className="receipt-section-title">{t('pos.payment')}</div>
-          <table className="receipt-items">
-            <thead>
-              <tr>
-                <th>{t('pos.method')}</th>
-                <th className="num">{t('pos.amount')}</th>
-                <th>{t('audit.time')}</th>
-                <th>{t('audit.user')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {displayPayments.map((pmt) => (
-                <tr key={pmt.id}>
-                  <td>{pmt.method === 'credit' ? t('pos.credit') : PAYMENT_METHOD_LABELS[pmt.method] || pmt.method}</td>
-                  <td className="num">{money(pmt.amount)}</td>
-                  <td>{pmt.paymentDate ? formatDateTime(pmt.paymentDate) : '—'}</td>
-                  <td>{pmt.receivedByName || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
-
-      {returns.length > 0 ? (
-        <div className="receipt-section">
-          <div className="receipt-section-title">{t('nav.returns')}</div>
-          {returns.map((ret) => (
-            <div key={ret.id} className="receipt-return">
-              <div className="receipt-return-meta">
-                <span>{t('pos.returnDate')}: {formatDateTime(ret.returnDate)}</span>
-                <span>{t('pos.refundAmount')}: {money(ret.refundAmount)}</span>
-              </div>
-              {ret.reason ? <div className="receipt-return-reason">{t('pos.reason')}: {ret.reason}</div> : null}
-              {ret.createdByName ? (
-                <div className="receipt-return-reason">{t('pos.processedBy')}: {ret.createdByName}</div>
-              ) : null}
-              {ret.items && ret.items.length > 0 ? (
-                <table className="receipt-items">
-                  <thead>
-                    <tr>
-                      <th>{t('pos.items')}</th>
-                      <th className="num">{t('pos.qty')}</th>
-                      <th className="num">{t('invoice.rate')}</th>
-                      <th className="num">{t('pos.amount')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ret.items.map((item, index) => (
-                      <tr key={item.productId ?? index}>
-                        <td className="receipt-item-name">
-                          {item.productName}
-                          {item.productCode ? <span className="receipt-sub"> [{item.productCode}]</span> : null}
-                        </td>
-                        <td className="num">
-                          {formatQuantity(item.quantity)}
-                          {item.unit ? ` ${item.unit}` : ''}
-                        </td>
-                        <td className="num">{money(item.unitPrice)}</td>
-                        <td className="num">{money(item.lineTotal)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : null}
+      <div className="receipt-topbar">
+        <div className="receipt-brand">
+          <div className="receipt-brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 80 80" role="img" aria-hidden="true">
+              <path d="M41 11c-9 4-19 14-20 28-1 15 8 28 22 33 19-4 31-22 27-39-4-18-18-25-29-22Zm8 13c7 4 11 12 10 20-1 8-6 14-13 17-8-2-14-9-14-18 0-10 8-18 17-19Z" fill="currentColor" />
+            </svg>
+          </div>
+          <div className="receipt-brand-copy">
+            <div className="receipt-shop">{shopName}</div>
+            <div className="receipt-tagline">Fresh Vegetables • Better Health</div>
+            <div className="receipt-brand-meta">
+              {shopAddress ? <span>{shopAddress}</span> : null}
+              {shopPhone ? <span>{shopPhone}</span> : null}
+              {shopGstin ? <span>{shopGstin}</span> : null}
             </div>
-          ))}
+          </div>
         </div>
-      ) : null}
 
-      {credit ? (
-        <div className="receipt-section">
-          <div className="receipt-section-title">{t('invoice.credit')}</div>
-          {credit.recorded ? (
+        <div className="receipt-header-meta">
+          <div className="receipt-header-line"><span>{t('invoice.billNo')}</span><strong>{invoice.invoiceNumber}</strong></div>
+          <div className="receipt-header-line"><span>{t('invoice.date')}</span><strong>{stamp.date}</strong></div>
+          <div className="receipt-header-line"><span>{t('invoice.time')}</span><strong>{stamp.time}</strong></div>
+          <div className="receipt-header-line"><span>{t('invoice.type')}</span><strong>{saleTypeLabel}</strong></div>
+        </div>
+      </div>
+
+      <div className="receipt-body">
+        <div className="receipt-panel">
+          <div className="receipt-panel-title">{t('pos.customer')}</div>
+          <div className="receipt-customer-card">
+            <div className="receipt-customer-name">{customer ? customer.name : t('common.walkIn')}</div>
+            {customer?.phone ? <div className="receipt-customer-meta">Phone: {customer.phone}</div> : null}
+          </div>
+        </div>
+
+        {invoice.items && invoice.items.length > 0 ? (
+          <div className="receipt-panel">
+            <div className="receipt-panel-title">{t('invoice.items')}</div>
             <table className="receipt-items">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>{t('pos.items')}</th>
+                  <th className="num">{t('pos.qty')}</th>
+                  <th className="num">{t('invoice.rate')}</th>
+                  <th className="num">{t('pos.amount')}</th>
+                </tr>
+              </thead>
               <tbody>
-                <tr>
-                  <td>{t('pos.amount')}</td>
-                  <td className="num">{money(credit.amount)}</td>
-                </tr>
-                <tr>
-                  <td>{t('invoice.netCredit')}</td>
-                  <td className="num">{money(credit.netCredit)}</td>
-                </tr>
-                {credit.reversalCount > 0 ? (
-                  <tr>
-                    <td>{t('invoice.reversed')}</td>
-                    <td className="num">{money(credit.reversalTotal)}</td>
+                {invoice.items.map((item, index) => (
+                  <tr key={item.productId ?? index}>
+                    <td className="receipt-row-index">{index + 1}</td>
+                    <td className="receipt-item-name">
+                      <span className="receipt-item-title">{item.productName}</span>
+                      {item.productCode ? <span className="receipt-sub">[{item.productCode}]</span> : null}
+                      {item.unit ? <span className="receipt-unit">{item.unit}</span> : null}
+                    </td>
+                    <td className="num">{formatQuantity(item.quantity)}{item.unit ? ` ${item.unit}` : ''}</td>
+                    <td className="num">{money(item.unitPrice)}</td>
+                    <td className="num">{money(item.lineTotal)}</td>
                   </tr>
-                ) : null}
+                ))}
               </tbody>
             </table>
-          ) : (
-            <p className="receipt-sub" style={{ margin: 0 }}>
-              {t('common.none')}
-              {credit.reversalCount > 0 ? ` · ${credit.reversalCount} · ${money(credit.reversalTotal)}` : ''}.
-            </p>
-          )}
+          </div>
+        ) : null}
+
+        <div className="receipt-lower-grid">
+          {payments.length > 0 ? (
+            <div className="receipt-panel">
+              <div className="receipt-panel-title">{t('pos.payment')}</div>
+              <table className="receipt-payment-table">
+                <thead>
+                  <tr>
+                    <th>{t('pos.method')}</th>
+                    <th className="num">{t('pos.amount')}</th>
+                    <th>{t('invoice.date')}</th>
+                    <th>{t('invoice.time')}</th>
+                    <th>{t('audit.user')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payments.map((pmt) => {
+                    const pmtStamp = dateTimeParts(pmt.paymentDate);
+                    return (
+                      <tr key={pmt.id}>
+                        <td>{pmt.method === 'credit' ? t('pos.credit') : PAYMENT_METHOD_LABELS[pmt.method] || pmt.method}</td>
+                        <td className="num">{money(pmt.amount)}</td>
+                        <td>{pmtStamp.date}</td>
+                        <td>{pmtStamp.time}</td>
+                        <td>{pmt.receivedByName || '—'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+
+          <div className="receipt-panel totals-panel">
+            <div className="receipt-panel-title">{t('pos.total')}</div>
+            <div className="receipt-total-box">
+              <div className="receipt-total-line">
+                <span>{t('pos.subtotal')}</span>
+                <strong>{money(invoice.subtotal)}</strong>
+              </div>
+              {Number(invoice.discountAmount) > 0 ? (
+                <div className="receipt-total-line">
+                  <span>{t('pos.discount')}</span>
+                  <strong>- {money(invoice.discountAmount)}</strong>
+                </div>
+              ) : null}
+              {hasGst && interState ? (
+                <div className="receipt-total-line">
+                  <span>{t('invoice.igst')}</span>
+                  <strong>{money(igst)}</strong>
+                </div>
+              ) : null}
+              {hasGst && !interState ? (
+                <>
+                  {cgst > 0 ? <div className="receipt-total-line"><span>{t('invoice.cgst')}</span><strong>{money(cgst)}</strong></div> : null}
+                  {sgst > 0 ? <div className="receipt-total-line"><span>{t('invoice.sgst')}</span><strong>{money(sgst)}</strong></div> : null}
+                </>
+              ) : null}
+              {hasGst ? (
+                <div className="receipt-total-line total-gst">
+                  <span>{t('invoice.gstTotal')}</span>
+                  <strong>{money(invoice.taxAmount)}</strong>
+                </div>
+              ) : null}
+              <div className="receipt-total-sep" />
+              <div className="receipt-total-line total-major">
+                <span>{t('pos.total')}</span>
+                <strong>{money(invoice.totalAmount)}</strong>
+              </div>
+              <div className="receipt-total-line">
+                <span>{t('pos.paid')}</span>
+                <strong>{money(invoice.amountPaid)}</strong>
+              </div>
+              {balanceDue > 0 ? (
+                <div className="receipt-total-line total-due">
+                  <span>{t('pos.balanceDue')}</span>
+                  <strong>{money(balanceDue)}</strong>
+                </div>
+              ) : null}
+            </div>
+          </div>
         </div>
-      ) : null}
 
-      <div className="receipt-dotted" />
+        {showCreditSection ? (
+          <div className="receipt-panel">
+            <div className="receipt-panel-title">{t('invoice.credit')}</div>
+            <div className="receipt-credit-grid">
+              <div className="receipt-credit-label">{t('pos.customer')}</div>
+              <div className="receipt-credit-value">{customer ? customer.name : t('common.walkIn')}</div>
+              <div className="receipt-credit-label">{t('pos.amount')}</div>
+              <div className="receipt-credit-value">{money(credit.amount)}</div>
+              <div className="receipt-credit-label">{t('pos.balanceDue')}</div>
+              <div className="receipt-credit-value">{money(balanceDue)}</div>
+              <div className="receipt-credit-label">{t('pos.status')}</div>
+              <div className="receipt-credit-value"><span className="receipt-credit-status">Outstanding</span></div>
+            </div>
+          </div>
+        ) : null}
 
-      <div className="receipt-foot">
+        <div className={`receipt-status ${balanceDue > 0 ? 'warning' : 'success'}`}>
+          {statusNote}
+        </div>
+      </div>
+
+      <div className="receipt-footer">
         <div className="receipt-thanks">{t('invoice.thankYou')}</div>
-        <div className="receipt-foot-shop">{shop.shopName || t('common.appName')}</div>
+        <div className="receipt-foot-shop">{shopName}</div>
         <div className="receipt-sub">
-          {t('invoice.title')} #{invoice.saleId} · {invoice.createdBy?.username || '—'} · {formatDateTime(invoice.createdAt)}
+          {t('invoice.title')} #{invoice.invoiceNumber} · {invoice.createdBy?.username || '—'} · {stamp.date}
         </div>
       </div>
     </div>

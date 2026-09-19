@@ -37,6 +37,15 @@ const SORT_MAPS = {
   customers: { name: 'customer_name', gross: 'gross_sales', salesCount: 'sales_count' },
   products: { name: 'p.name', gross: 'gross_sales', quantitySold: 'quantity_sold' },
   suppliers: { name: 'supplier_name', total: 'total_amount', purchaseCount: 'purchase_count' },
+  salesItems: {
+    date: 's.sale_date',
+    invoice: 's.invoice_number',
+    customer: 'COALESCE(c.name, \'Walk-in Customer\')',
+    employee: 'u.username',
+    item: 'p.name',
+    category: 'p.category_name',
+    id: 'si.id',
+  },
 };
 
 const DEFAULT_ORDERS = {
@@ -49,6 +58,7 @@ const DEFAULT_ORDERS = {
   customers: 'gross_sales DESC, customer_name ASC',
   products: 'gross_sales DESC, p.name ASC',
   suppliers: 'total_amount DESC, supplier_name ASC',
+  salesItems: 's.sale_date DESC, si.id DESC',
 };
 
 function toMoney(value) {

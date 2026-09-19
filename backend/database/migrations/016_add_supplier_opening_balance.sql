@@ -17,10 +17,10 @@
 -- =====================================================================
 
 ALTER TABLE suppliers
-    ADD COLUMN IF NOT EXISTS opening_balance DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER address;
+    ADD COLUMN opening_balance DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER address;
 
 ALTER TABLE customers
-    ADD COLUMN IF NOT EXISTS opening_balance DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER address;
+    ADD COLUMN opening_balance DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER address;
 
 ALTER TABLE payments
-    ADD COLUMN IF NOT EXISTS supplier_id INT UNSIGNED NULL AFTER customer_id;
+    ADD COLUMN supplier_id INT UNSIGNED NULL AFTER customer_id;

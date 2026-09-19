@@ -19,12 +19,12 @@ const getById = asyncHandler(async (req, res) => {
 });
 
 const create = asyncHandler(async (req, res) => {
-  const user = await userService.create(req.body);
+  const user = await userService.create(req.body, req.user);
   response.created(res, user, 'Employee created');
 });
 
 const update = asyncHandler(async (req, res) => {
-  const user = await userService.update(Number(req.params.id), req.body);
+  const user = await userService.update(Number(req.params.id), req.body, req.user);
   response.ok(res, user, 'Employee updated');
 });
 

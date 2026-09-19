@@ -83,6 +83,8 @@ const customers = [
   query('sortBy').optional({ values: 'falsy' }).isIn(['name', 'gross', 'salesCount']).withMessage('sortBy not allowed for this report'),
 ];
 
+
+
 const products = [
   ...dateChecks,
   ...paginationChecks,

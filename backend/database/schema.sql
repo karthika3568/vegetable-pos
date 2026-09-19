@@ -45,6 +45,7 @@ DROP TABLE IF EXISTS user_permissions;
 DROP TABLE IF EXISTS permissions;
 DROP TABLE IF EXISTS product_variants;
 DROP TABLE IF EXISTS products;
+DROP TABLE IF EXISTS tax_codes;
 DROP TABLE IF EXISTS categories;
 DROP TABLE IF EXISTS suppliers;
 DROP TABLE IF EXISTS customers;
@@ -195,6 +196,7 @@ CREATE TABLE customers (
     phone           VARCHAR(20)  NULL,
     email           VARCHAR(100) NULL,
     address         VARCHAR(255) NULL,
+    state           VARCHAR(100) NULL,
     opening_balance DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     credit_limit    DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     current_balance DECIMAL(12,2) NOT NULL DEFAULT 0.00, -- outstanding credit owed to shop
@@ -210,33 +212,69 @@ CREATE TABLE customers (
 CREATE INDEX idx_customers_status ON customers(status);
 
 -- =====================================================================
+-- 7B. TAX CODES (GST MASTER)
+-- Master list of Goods & Services Tax rates. A product links here via
+-- products.tax_code_id (NULL = no tax / exempt). sales / sale_items
+-- copy the applicable rates at sale time so historical invoices stay
+-- valid even if the master rate later changes.
+-- =====================================================================
+CREATE TABLE tax_codes (
+    id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    code            VARCHAR(20)  NOT NULL,
+    name            VARCHAR(100) NOT NULL,
+    cgst_rate       DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    sgst_rate       DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    igst_rate       DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    is_active       TINYINT(1)   NOT NULL DEFAULT 1,
+    created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT uq_tax_codes_code UNIQUE (code),
+    CONSTRAINT chk_tax_rates CHECK (
+        cgst_rate >= 0 AND cgst_rate <= 100
+        AND sgst_rate >= 0 AND sgst_rate <= 100
+        AND igst_rate >= 0 AND igst_rate <= 100
+    )
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- =====================================================================
 -- 8. PRODUCTS
 -- Disabled (not deleted) so historical sales/purchases keep resolving,
 -- per requirement: "Disabled products must retain historical sales."
 -- cost_price is the last known purchase cost (reference only - actual
 -- purchase cost per batch lives on purchase_items). selling_price is
--- the current POS price.
+-- the current POS price. GST fields: barcode (unique when set), HSN
+-- code, tax_code_id (FK to tax_codes), mrp, and whether tax is
+-- included in selling_price (price_includes_tax).
 -- =====================================================================
 CREATE TABLE products (
-    id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    category_id     INT UNSIGNED NOT NULL,
-    sku             VARCHAR(50)  NOT NULL,
-    name            VARCHAR(150) NOT NULL,
-    unit            ENUM('kg','g','piece','dozen','bunch','litre') NOT NULL DEFAULT 'kg',
-    cost_price      DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-    selling_price   DECIMAL(10,2) NOT NULL,
-    image_path      VARCHAR(255) NULL,
-    reorder_level   DECIMAL(10,3) NOT NULL DEFAULT 0.000,
-    is_active       TINYINT(1) NOT NULL DEFAULT 1,
-    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    id                  INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    category_id         INT UNSIGNED NOT NULL,
+    sku                 VARCHAR(50)  NOT NULL,
+    barcode             VARCHAR(100) NULL,
+    hsn_code            VARCHAR(20)  NULL,
+    tax_code_id         INT UNSIGNED NULL,
+    name                VARCHAR(150) NOT NULL,
+    unit                ENUM('kg','g','piece','dozen','bunch','litre') NOT NULL DEFAULT 'kg',
+    cost_price          DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    selling_price       DECIMAL(10,2) NOT NULL,
+    mrp                 DECIMAL(10,2) NULL,
+    price_includes_tax  TINYINT(1)   NOT NULL DEFAULT 0,
+    image_path          VARCHAR(255) NULL,
+    reorder_level       DECIMAL(10,3) NOT NULL DEFAULT 0.000,
+    is_active           TINYINT(1) NOT NULL DEFAULT 1,
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT uq_products_sku UNIQUE (sku),
     CONSTRAINT fk_products_category FOREIGN KEY (category_id) REFERENCES categories(id)
         ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT fk_products_tax_code FOREIGN KEY (tax_code_id) REFERENCES tax_codes(id)
+        ON UPDATE CASCADE ON DELETE SET NULL,
     CONSTRAINT chk_products_prices CHECK (cost_price >= 0 AND selling_price >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_products_category ON products(category_id);
+CREATE INDEX idx_products_barcode ON products(barcode);
+CREATE INDEX idx_products_tax_code ON products(tax_code_id);
 CREATE INDEX idx_products_name ON products(name);
 CREATE INDEX idx_products_active ON products(is_active);
 
@@ -259,6 +297,7 @@ CREATE TABLE product_variants (
     variant_name    VARCHAR(100) NOT NULL,
     purchase_price  DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     selling_price   DECIMAL(10,2) NOT NULL,
+    attributes      JSON NULL,
     is_active       TINYINT(1) NOT NULL DEFAULT 1,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -269,6 +308,7 @@ CREATE TABLE product_variants (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_product_variants_active ON product_variants(is_active);
+CREATE INDEX idx_product_variants_name ON product_variants(variant_name);
 
 -- =====================================================================
 -- 8B. PURCHASE ORDERS
@@ -350,6 +390,8 @@ CREATE TABLE purchases (
     purchase_date   DATE NOT NULL,
     total_amount    DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     paid_amount     DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    damage_adjustment DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    damage_adjustment_accepted TINYINT(1) NOT NULL DEFAULT 0,
     payment_status  ENUM('unpaid','partial','paid') NOT NULL DEFAULT 'unpaid',
     status          ENUM('completed','cancelled') NOT NULL DEFAULT 'completed',
     notes           VARCHAR(255) NULL,
@@ -483,6 +525,9 @@ CREATE TABLE sales (
     subtotal        DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     tax_amount      DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    cgst_amount     DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    sgst_amount     DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    igst_amount     DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     total_amount    DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     paid_amount     DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     balance_due     DECIMAL(12,2) GENERATED ALWAYS AS (total_amount - paid_amount) STORED,
@@ -520,6 +565,13 @@ CREATE TABLE sale_items (
     quantity        DECIMAL(10,3) NOT NULL,
     unit_price      DECIMAL(10,2) NOT NULL,
     discount_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    tax_code        VARCHAR(20) NULL,
+    cgst_rate       DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    sgst_rate       DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    igst_rate       DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    cgst_amount     DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    sgst_amount     DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    igst_amount     DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     line_total      DECIMAL(12,2) GENERATED ALWAYS AS (quantity * unit_price - discount_amount) STORED,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_sale_items_sale FOREIGN KEY (sale_id) REFERENCES sales(id)
@@ -581,7 +633,6 @@ CREATE TABLE payments (
 CREATE INDEX idx_payments_sale ON payments(sale_id);
 CREATE INDEX idx_payments_purchase ON payments(purchase_id);
 CREATE INDEX idx_payments_customer ON payments(customer_id);
-CREATE INDEX idx_payments_supplier ON payments(supplier_id);
 CREATE INDEX idx_payments_date ON payments(payment_date);
 
 -- =====================================================================

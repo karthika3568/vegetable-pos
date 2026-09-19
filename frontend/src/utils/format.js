@@ -33,22 +33,45 @@ export function formatDateOnly(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '—';
 }
 
+/**
+ * Canonical local date "DD-MM-YYYY" (e.g. 18-09-2026). Backend stores local
+ * wall-clock DATETIME strings; parse as LOCAL and never bounce through
+ * UTC/ISO, so the day and hour never silently shift (no double conversion).
+ */
+export function formatDate(value) {
+  if (!value) return '—';
+  const s = String(value).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '—';
+  const [y, m, d] = s.split('-');
+  return `${d}-${m}-${y}`;
+}
+
+/**
+ * "12:35 PM" from a backend wall-clock value. The value may be a bare
+ * "HH:MM(:SS)" or a full "YYYY-MM-DD HH:MM:SS". Parsed as LOCAL — never
+ * routed through UTC (avoids the classic double/timezone time shift).
+ */
+export function formatTime(value) {
+  if (!value) return '—';
+  const s = String(value);
+  const match = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!match) return '—';
+  let hours = Number(match[1]);
+  const minutes = match[2];
+  if (!Number.isInteger(hours) || hours < 0 || hours > 23) return '—';
+  const suffix = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  if (hours === 0) hours = 12;
+  return `${hours}:${minutes} ${suffix}`;
+}
+
 export function formatDateTime(value) {
   if (!value) return '—';
-  try {
-    const d = new Date(value);
-    if (!Number.isFinite(d.getTime())) return '—';
-    return d.toLocaleString('en-IN', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    });
-  } catch {
-    return '—';
-  }
+  const date = formatDate(value);
+  const time = formatTime(value);
+  if (date === '—' && time === '—') return '—';
+  if (date !== '—' && time !== '—') return `${date}, ${time}`;
+  return date !== '—' ? date : time;
 }
 
 export function isNumber(value) {

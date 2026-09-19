@@ -8,7 +8,7 @@ import { useToast } from '../context/ToastContext.jsx';
 import { useLanguage } from '../i18n/index.jsx';
 import ErrorState from '../components/ErrorState.jsx';
 import EmptyState from '../components/EmptyState.jsx';
-import Pagination from '../components/Pagination.jsx';
+import { FiChevronLeft, FiChevronRight } from 'react-icons/fi';
 import Spinner from '../components/Spinner.jsx';
 import ProductImage from '../components/ProductImage.jsx';
 import { formatMoney, formatQuantity } from '../utils/format.js';
@@ -20,7 +20,6 @@ import {
 } from '../utils/posPayment.js';
 import { playPosSound } from '../utils/sounds.js';
 
-const PRODUCT_PAGE_SIZE = 12;
 const PAYMENT_MAX = 20;
 const PAYMENT_TYPE_LABELS_KEYS = {
   cash: 'status.cash',
@@ -589,17 +588,22 @@ export default function POSPage() {
   const customerRef = useRef(null);
   const discountRef = useRef(null);
   const completeRef = useRef(null);
-
+  const posPageRef = useRef(null);
+  const productStripRef = useRef(null);
+  const customerSectionRef = useRef(null);
+  const checkoutPaneRef = useRef(null);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
   const [highlightId, setHighlightId] = useState(null);
+  const [stripCanScroll, setStripCanScroll] = useState({ left: false, right: false });
 
   const [cart, setCart] = useState([]);
 
   const [customerInput, setCustomerInput] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
+  const [customerOpen, setCustomerOpen] = useState(false);
+  const [customerDropdownStyle, setCustomerDropdownStyle] = useState(null);
 
   const [discount, setDiscount] = useState('');
   const [paymentMode, setPaymentMode] = useState(PAYMENT_MODES.full);
@@ -623,12 +627,90 @@ export default function POSPage() {
   }, [customerInput]);
 
   const customers = useAsync(
-    () => posService.customers({ search: customerSearch, limit: 100 }),
+    () =>
+      customerSearch
+        ? posService.customers({ search: customerSearch, limit: 10 })
+        : Promise.resolve([]),
     [customerSearch]
   );
 
+  const showCustomerDropdown = customerOpen && customerSearch !== '' && !selectedCustomerId;
+
+  // Fixed-position dropdown so it escapes the checkout pane's overflow-y
+  // clipping. Reposition on open; close on outside click, Escape, resize,
+  // or any scroll of the checkout pane / window.
+  useEffect(() => {
+    if (!showCustomerDropdown) {
+      setCustomerDropdownStyle(null);
+      return undefined;
+    }
+    const input = customerRef.current;
+    if (!input) return undefined;
+    const position = () => {
+      const rect = input.getBoundingClientRect();
+      setCustomerDropdownStyle({
+        top: Math.round(rect.bottom + 4),
+        left: Math.round(rect.left),
+        width: Math.round(rect.width),
+      });
+    };
+    position();
+    const close = () => {
+      setCustomerOpen(false);
+      setCustomerDropdownStyle(null);
+    };
+    const onDocMouseDown = (event) => {
+      const section = customerSectionRef.current;
+      if (section && !section.contains(event.target)) close();
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    window.addEventListener('resize', close);
+    window.addEventListener('scroll', close, true);
+    const pane = checkoutPaneRef.current;
+    pane?.addEventListener('scroll', close);
+    return () => {
+      document.removeEventListener('mousedown', onDocMouseDown);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', close, true);
+      pane?.removeEventListener('scroll', close);
+    };
+  }, [showCustomerDropdown]);
+
   const customerItems = customers.data ?? [];
   const productItems = useMemo(() => products.data ?? [], [products.data]);
+
+  // Track whether the horizontal product strip can scroll in either
+  // direction so the prev/next controls can be enabled/disabled.
+  useEffect(() => {
+    const strip = productStripRef.current;
+    if (!strip) return undefined;
+    const update = () =>
+      setStripCanScroll({
+        left: strip.scrollLeft > 1,
+        right: strip.scrollLeft < strip.scrollWidth - strip.clientWidth - 1,
+      });
+    update();
+    strip.addEventListener('scroll', update);
+    window.addEventListener('resize', update);
+    return () => {
+      strip.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+    };
+  }, [productItems]);
+
+  // Keep the keyboard-highlighted product card in view while scrolling
+  // through the strip with the arrow keys.
+  useEffect(() => {
+    if (highlightId == null) return;
+    const strip = productStripRef.current;
+    if (!strip) return;
+    const card = strip.querySelector('.pos-product-card.is-selected');
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  }, [highlightId]);
+
+  function scrollStrip(direction) {
+    productStripRef.current?.scrollBy({ left: direction * 480, behavior: 'smooth' });
+  }
 
   const settings = posSettings.data ?? {};
   const fallbackRate = Number(settings.tax_rate_percent) || 0;
@@ -639,14 +721,6 @@ export default function POSPage() {
     if (!selectedCustomerId) return null;
     return customerItems.find((customer) => Number(customer.id) === Number(selectedCustomerId)) || null;
   }, [selectedCustomerId, customerItems]);
-
-  // Pagination over the (server-limited) product snapshot.
-  const pagedProducts = useMemo(() => {
-    const offset = (page - 1) * PRODUCT_PAGE_SIZE;
-    return productItems.slice(offset, offset + PRODUCT_PAGE_SIZE);
-  }, [productItems, page]);
-
-  const totalPages = Math.max(1, Math.ceil(productItems.length / PRODUCT_PAGE_SIZE));
 
   // Re-resolve line prices whenever the sale type changes.
   function repriceLines(lines, nextSaleType) {
@@ -738,21 +812,18 @@ export default function POSPage() {
       handleAddToCart(exactMatch);
       setSearchInput('');
       setSearch('');
-      setPage(1);
       setHighlightId(null);
       searchRef.current?.focus();
       return;
     }
 
     setSearch(value);
-    setPage(1);
     setHighlightId(null);
   }
 
   function handleClearSearch() {
     setSearchInput('');
     setSearch('');
-    setPage(1);
     setHighlightId(null);
     searchRef.current?.focus();
   }
@@ -834,16 +905,21 @@ export default function POSPage() {
   function handleCustomerInputChange(event) {
     setCustomerInput(event.target.value);
     setSelectedCustomerId('');
+    setCustomerOpen(true);
   }
 
   function handleSelectCustomer(customer) {
     setSelectedCustomerId(customer.id);
-    setCustomerInput(customer.name);
+    setCustomerInput(`${customer.name}${customer.phone ? ` - ${customer.phone}` : ''}`);
+    setCustomerOpen(false);
   }
 
   function handleClearCustomer() {
     setSelectedCustomerId('');
     setCustomerInput('');
+    setCustomerSearch('');
+    setCustomerOpen(false);
+    customerRef.current?.focus();
   }
 
   function handlePaymentChange(index, patch) {
@@ -969,6 +1045,7 @@ export default function POSPage() {
     setSelectedCustomerId('');
     setCustomerInput('');
     setCustomerSearch('');
+    setCustomerOpen(false);
     setDiscount('');
     setPaymentMode(PAYMENT_MODES.full);
     setPaymentRows([{ method: 'cash', amount: '' }]);
@@ -1010,6 +1087,8 @@ export default function POSPage() {
       }
       if (event.key === 'Escape') {
         handleClearSearch();
+        setCustomerOpen(false);
+        setCustomerDropdownStyle(null);
         return;
       }
       if (typing && event.key !== 'Tab') return;
@@ -1024,13 +1103,12 @@ export default function POSPage() {
         return;
       }
 
-      // Arrow-key navigation + Enter within the product grid only
-      // operates when the operator is not editing a value.
-      const grid = pagedProducts;
+      // Arrow-key navigation + Enter within the horizontal product strip
+      // operates only when the operator is not editing a value.
+      const grid = productItems;
       if (grid.length > 0) {
         const index = grid.findIndex((product) => Number(product.id) === Number(highlightId));
         const current = index === -1 ? 0 : index;
-        const columns = 3;
 
         if (event.key === 'ArrowRight') {
           event.preventDefault();
@@ -1039,15 +1117,6 @@ export default function POSPage() {
         } else if (event.key === 'ArrowLeft') {
           event.preventDefault();
           const prev = grid[(current - 1 + grid.length) % grid.length];
-          if (prev) setHighlightId(prev.id);
-        } else if (event.key === 'ArrowDown') {
-          event.preventDefault();
-          const next = current + columns < grid.length ? grid[current + columns] : grid[grid.length - 1];
-          if (next) setHighlightId(next.id);
-        } else if (event.key === 'ArrowUp') {
-          event.preventDefault();
-          const prevIndex = current - columns;
-          const prev = prevIndex >= 0 ? grid[prevIndex] : grid[0];
           if (prev) setHighlightId(prev.id);
         } else if (event.key === 'Enter') {
           event.preventDefault();
@@ -1059,16 +1128,35 @@ export default function POSPage() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [pagedProducts, highlightId, cart.length, paymentRows.length]);
+  }, [productItems, highlightId, cart.length, paymentRows.length]);
+
+  // After a successful sale, bring the POS container back to the top so the
+  // success/invoice summary is immediately visible without the operator having
+  // to manually scroll back from the checkout area.
+  useEffect(() => {
+    if (!completedSale) return;
+    const scrollToTop = () => {
+      if (posPageRef.current) {
+        posPageRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    requestAnimationFrame(scrollToTop);
+  }, [completedSale]);
 
   if (completedSale) {
-    return <SuccessSale sale={completedSale} onReset={handleNewSale} />;
+    return (
+      <div className="pos-page" ref={posPageRef}>
+        <SuccessSale sale={completedSale} onReset={handleNewSale} />
+      </div>
+    );
   }
 
   const canSubmit = cart.length > 0 && !submitting && !creditBlocked;
 
   return (
-    <div className="pos-page">
+    <div className="pos-page" ref={posPageRef}>
       <div className="pos-grid">
         <section className="pos-panel pos-products-pane" aria-label="Product selection">
           <div className="pos-panel-head">
@@ -1135,35 +1223,56 @@ export default function POSPage() {
               </div>
             ) : null}
 
-            {products.data && pagedProducts.length === 0 ? (
+            {products.data && productItems.length === 0 ? (
               <EmptyState
                 title={search ? t('pos.searchProducts') : t('pos.products')}
                 description={search ? t('common.noResults') : t('pos.noItemsInCart')}
               />
             ) : null}
 
-            {products.data && pagedProducts.length > 0 ? (
+            {products.data && productItems.length > 0 ? (
               <>
-                <div className="pos-product-grid">
-                  {pagedProducts.map((product) => (
-                    <ProductCard
-                      key={product.id}
-                      product={product}
-                      saleType={saleType}
-                      selected={Number(highlightId) === Number(product.id)}
-                      onSelect={(id) => setHighlightId(id)}
-                      onAdd={handleAddToCart}
-                    />
-                  ))}
+                <div className="pos-strip-wrap">
+                  <button
+                    type="button"
+                    className="pos-strip-btn"
+                    onClick={() => scrollStrip(-1)}
+                    disabled={!stripCanScroll.left}
+                    aria-label={t('pos.prev')}
+                    title={t('pos.prev')}
+                  >
+                    <FiChevronLeft />
+                  </button>
+                  <div className="pos-product-strip" ref={productStripRef}>
+                    {productItems.map((product) => (
+                      <ProductCard
+                        key={product.id}
+                        product={product}
+                        saleType={saleType}
+                        selected={Number(highlightId) === Number(product.id)}
+                        onSelect={(id) => setHighlightId(id)}
+                        onAdd={handleAddToCart}
+                      />
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="pos-strip-btn"
+                    onClick={() => scrollStrip(1)}
+                    disabled={!stripCanScroll.right}
+                    aria-label={t('pos.next')}
+                    title={t('pos.next')}
+                  >
+                    <FiChevronRight />
+                  </button>
                 </div>
                 {products.loading ? <p className="pos-refreshing">{t('common.searching')}</p> : null}
-                <Pagination page={page} totalPages={totalPages} onChange={setPage} />
               </>
             ) : null}
           </div>
         </section>
 
-        <section className="pos-panel pos-checkout-pane" aria-label="Sale checkout">
+        <section className="pos-panel pos-checkout-pane" aria-label="Sale checkout" ref={checkoutPaneRef}>
           <div className="pos-panel-head">
             <h2 className="card-title">{t('pos.newSale')}</h2>
             <span className="card-caption">
@@ -1171,7 +1280,7 @@ export default function POSPage() {
             </span>
           </div>
 
-          <div className="pos-section">
+          <div className="pos-section" ref={customerSectionRef}>
             <div className="pos-section-head">
               <h3 className="card-title">{t('pos.customer')}</h3>
               <button
@@ -1184,55 +1293,71 @@ export default function POSPage() {
               </button>
             </div>
 
-            <div className="form-field">
-              <label htmlFor="pos-customer-search">{t('pos.searchCustomer')}</label>
-              <input
-                ref={customerRef}
-                id="pos-customer-search"
-                type="search"
-                value={customerInput}
-                onChange={handleCustomerInputChange}
-                placeholder={t('pos.searchCustomerPlaceholder')}
-                autoComplete="off"
-              />
-            </div>
-
             {selectedCustomer ? (
-              <p className="pos-muted">
-                {t('pos.customerState')}: {selectedCustomer.state || '—'}
-              </p>
-            ) : null}
+              <>
+                <div className="pos-selected-customer">
+                  <div className="pos-selected-customer-info">
+                    <span className="cell-main">
+                      {selectedCustomer.name}{' '}
+                      <span className="pos-selected-badge">✓ {t('pos.selected')}</span>
+                    </span>
+                    <span className="cell-sub">
+                      {[selectedCustomer.phone, selectedCustomer.email].filter(Boolean).join(' · ') || '—'}
+                    </span>
+                  </div>
+                  <button type="button" className="btn btn-outline btn-sm" onClick={handleClearCustomer}>
+                    {t('pos.change')}
+                  </button>
+                </div>
+                <p className="pos-muted">
+                  {t('pos.customerState')}: {selectedCustomer.state || '—'}
+                </p>
+              </>
+            ) : (
+              <div className="form-field">
+                <label htmlFor="pos-customer-search">{t('pos.searchCustomer')}</label>
+                <input
+                  ref={customerRef}
+                  id="pos-customer-search"
+                  type="search"
+                  value={customerInput}
+                  onChange={handleCustomerInputChange}
+                  placeholder={t('pos.searchCustomerPlaceholder')}
+                  autoComplete="off"
+                />
+              </div>
+            )}
 
-            {customers.loading ? <p className="pos-refreshing">{t('common.searching')}</p> : null}
-
-            {customers.error ? (
-              <p className="pos-muted-warn">
-                {t('pos.searchCustomer')}: {customers.error.message}
-              </p>
-            ) : null}
-
-            {!customers.loading && !customers.error && customerItems.length > 0 ? (
-              <div className="pos-customer-list">
-                {customerItems.map((customer) => {
-                  const isSelected = Number(selectedCustomerId) === customer.id;
-                  return (
+            {!selectedCustomer && customerDropdownStyle ? (
+              <div
+                className="pos-customer-dropdown"
+                style={customerDropdownStyle}
+                role="listbox"
+                aria-label={t('pos.searchCustomer')}
+              >
+                {customers.loading ? (
+                  <div className="pos-customer-dropdown-status">{t('common.searching')}</div>
+                ) : customers.error ? (
+                  <div className="pos-customer-dropdown-status">{customers.error.message}</div>
+                ) : customerItems.length === 0 ? (
+                  <div className="pos-customer-dropdown-status">{t('pos.noCustomersFound')}</div>
+                ) : (
+                  customerItems.map((customer) => (
                     <button
                       key={customer.id}
                       type="button"
-                      className={`pos-customer-option${isSelected ? ' is-selected' : ''}`}
+                      role="option"
+                      className="pos-customer-option"
                       onClick={() => handleSelectCustomer(customer)}
                     >
                       <span className="cell-main">{customer.name}</span>
-                      {customer.phone ? <span className="cell-sub">{customer.phone}</span> : null}
-                      {customer.state ? <span className="cell-sub">{customer.state}</span> : null}
+                      <span className="cell-sub">
+                        {[customer.phone, customer.email].filter(Boolean).join(' · ') || ''}
+                      </span>
                     </button>
-                  );
-                })}
+                  ))
+                )}
               </div>
-            ) : null}
-
-            {!customers.loading && !customers.error && customerItems.length === 0 ? (
-              <p className="pos-muted">{t('pos.noCustomersFound')}</p>
             ) : null}
           </div>
 

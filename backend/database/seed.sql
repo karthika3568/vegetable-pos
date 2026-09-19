@@ -63,4 +63,10 @@ INSERT INTO settings (setting_key, setting_value, description) VALUES
     ('tax_rate_percent',     '0',                 'Default tax percentage applied at POS'),
     ('invoice_prefix',       'INV-',              'Prefix for generated sale invoice numbers'),
     ('low_stock_threshold',  '5',                 'Default reorder alert threshold (used if a product has no reorder_level set)'),
-    ('shop_state',           'Maharashtra',       'State of the shop for GST calculation (IGST for inter-state, CGST+SGST for intra-state)');
+    ('shop_state',           'Maharashtra',       'State of the shop for GST calculation (IGST for inter-state, CGST+SGST for intra-state)'),
+    ('app_language',         'en',                'Application UI language (en|ta)'),
+    ('sound_enabled',        'on',                'Master switch for application sounds (off mutes everything)'),
+    ('sound_product',        'on',                'Sound when a product is added to the cart'),
+    ('sound_payment',        'on',                'Sound when a payment is recorded successfully'),
+    ('sound_invoice',        'on',                'Sound when an invoice is generated'),
+    ('sound_error',          'on',                'Sound on an error / failed operation');

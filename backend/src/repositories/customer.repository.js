@@ -138,8 +138,6 @@ async function update(id, { name, phone, email, address, state, creditLimit, ope
   if (openingBalance !== undefined) {
     fields.push('opening_balance = ?');
     params.push(openingBalance ?? 0);
-    fields.push('current_balance = ?');
-    params.push(openingBalance ?? 0);
   }
 
   if (fields.length === 0) {

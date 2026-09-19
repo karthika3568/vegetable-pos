@@ -60,6 +60,13 @@ export default function ReceiveGoodsModal({ po, onClose, onReceived }) {
         );
         return;
       }
+
+      if (damaged > received) {
+        setError(
+          `Damaged quantity ${damaged} cannot exceed the received quantity ${received} for ${line.productName}.`
+        );
+        return;
+      }
     }
 
     if (!linesWithQty.some((line) => (Number(line.received) || 0) > 0)) {

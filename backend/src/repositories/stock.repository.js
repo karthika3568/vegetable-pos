@@ -289,10 +289,31 @@ async function findTransactions({
        st.note,
        st.created_by,
        u.username AS created_by_name,
-       st.created_at
+       st.created_at,
+       -- Additive references for the movement ledger: the originating
+       -- invoice / purchase number and the party it belongs to. Keeps the
+       -- existing column set unchanged so callers stay source-compatible.
+       COALESCE(si.invoice_number, pi.invoice_number, po.po_number) AS reference_number,
+       COALESCE(cu.name, su.name, po_su.name) AS party_name,
+       CASE
+         WHEN st.reference_table = 'sales' AND cu.name IS NOT NULL THEN 'customer'
+         WHEN st.reference_table = 'purchases' AND su.name IS NOT NULL THEN 'supplier'
+         WHEN st.reference_table = 'purchase_orders' AND po_su.name IS NOT NULL THEN 'supplier'
+         ELSE NULL
+       END AS party_type
      FROM stock_transactions st
      JOIN products p ON p.id = st.product_id
      LEFT JOIN users u ON u.id = st.created_by
+     -- Resolve sale-linked movements (sales, return_sale, etc.) to their
+     -- invoice + customer.
+     LEFT JOIN sales si ON st.reference_table = 'sales' AND si.id = st.reference_id
+     LEFT JOIN customers cu ON cu.id = si.customer_id
+     -- Resolve purchase-linked movements to their invoice + supplier.
+     LEFT JOIN purchases pi ON st.reference_table = 'purchases' AND pi.id = st.reference_id
+     LEFT JOIN suppliers su ON su.id = pi.supplier_id
+     -- Resolve purchase-order-linked movements to their PO number + supplier.
+     LEFT JOIN purchase_orders po ON st.reference_table = 'purchase_orders' AND po.id = st.reference_id
+     LEFT JOIN suppliers po_su ON po_su.id = po.supplier_id
      ${whereSql}
      ORDER BY st.created_at DESC, st.id DESC
      LIMIT ? OFFSET ?`,

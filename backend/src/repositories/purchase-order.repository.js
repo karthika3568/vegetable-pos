@@ -476,6 +476,14 @@ async function receive(poId, { receiptDate, lines, createdBy }) {
         throw ApiError.badRequest('received and damaged quantities cannot be negative');
       }
 
+      if (damaged > received) {
+        await connection.rollback();
+        connection.release();
+        throw ApiError.badRequest(
+          `Damaged quantity ${damaged} cannot exceed the received quantity ${received} for PO item ${row.product_id}`
+        );
+      }
+
       if (received + damaged > remaining) {
         await connection.rollback();
         connection.release();

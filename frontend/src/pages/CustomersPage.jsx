@@ -41,7 +41,7 @@ function CustomerFormModal({ initial, onClose, onSubmit }) {
     initial ? (initial.credit_limit != null ? String(initial.credit_limit) : '') : ''
   );
   const [openingBalance, setOpeningBalance] = useState(
-    initial ? (initial.current_balance != null ? String(initial.current_balance) : '') : ''
+    initial ? (initial.opening_balance != null ? String(initial.opening_balance) : '') : ''
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -61,8 +61,8 @@ function CustomerFormModal({ initial, onClose, onSubmit }) {
     }
 
     const trimmedPhone = phone.trim();
-    if (trimmedPhone.length > 20) {
-      setError('Phone must be at most 20 characters.');
+    if (trimmedPhone.length > 10) {
+      setError('Phone must be at most 10 characters.');
       return;
     }
 
@@ -136,13 +136,13 @@ function CustomerFormModal({ initial, onClose, onSubmit }) {
             id="customerPhone"
             name="phone"
             type="text"
-            maxLength={20}
+            maxLength={10}
             value={phone}
             onChange={(event) => setPhone(event.target.value)}
             placeholder="e.g. 9876543210"
             disabled={submitting}
           />
-          <p className="field-hint">Optional. Up to 20 characters. Must be unique — the backend rejects a phone already in use.</p>
+          <p className="field-hint">Optional. Up to 10 characters. Must be unique — the backend rejects a phone already in use.</p>
         </div>
 
         <div className="form-field">

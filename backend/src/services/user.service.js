@@ -13,6 +13,22 @@ const auditRepository = require('../repositories/audit.repository');
 const password = require('../utils/password');
 const ApiError = require('../utils/ApiError');
 
+/**
+ * Role privilege ranking (admin > manager > cashier).
+ *
+ * Backend-authoritative anti-escalation: an actor holding users.manage
+ * may only create/assign roles whose privilege is AT MOST their own.
+ * A non-admin can therefore never grant (or self-grant) the admin role
+ * or any role higher than their own - a frontend dropdown that hides
+ * the admin option is never relied upon. Unknown role names rank below
+ * every known role so a surprise role can never be assigned 'upwards'.
+ */
+const ROLE_PRIVILEGE = { admin: 3, manager: 2, cashier: 1 };
+
+function rolePrivilege(roleName) {
+  return ROLE_PRIVILEGE[roleName] ?? 0;
+}
+
 function normalizeOptionalText(value) {
   if (value === undefined) return undefined;
   if (value === null) return null;
@@ -41,12 +57,18 @@ async function getById(id) {
   return { ...user, permissions };
 }
 
-async function create({ username, password: plainPassword, fullName, email, phone, address, roleId, permissions }) {
+async function create({ username, password: plainPassword, fullName, email, phone, address, roleId, permissions }, actor) {
   const normalizedPhone = normalizeOptionalText(phone);
   const normalizedAddress = normalizeOptionalText(address);
   await ensurePhoneAvailable(normalizedPhone);
   const role = await roleRepository.findById(roleId);
   if (!role) throw ApiError.badRequest(`roleId ${roleId} does not correspond to an existing role`);
+
+  if (rolePrivilege(role.name) > rolePrivilege(actor?.roleName)) {
+    throw ApiError.forbidden(
+      `You cannot create a user with the '${role.name}' role (higher privilege than your own)`
+    );
+  }
 
   const requestedPermissions = Array.isArray(permissions) ? permissions : [];
   if (requestedPermissions.length > 0 && role.name !== 'admin') {
@@ -70,7 +92,7 @@ async function create({ username, password: plainPassword, fullName, email, phon
   return getById(user.id);
 }
 
-async function update(id, { fullName, email, phone, address, roleId }) {
+async function update(id, { fullName, email, phone, address, roleId }, actor) {
   const existing = await getById(id);
   const normalizedPhone = normalizeOptionalText(phone);
   const normalizedAddress = normalizeOptionalText(address);
@@ -78,6 +100,21 @@ async function update(id, { fullName, email, phone, address, roleId }) {
   if (roleId !== undefined) {
     const role = await roleRepository.findById(roleId);
     if (!role) throw ApiError.badRequest(`roleId ${roleId} does not correspond to an existing role`);
+
+    // A user must never be able to change their own role: an admin
+    // could otherwise self-demote and lock the system out of admin,
+    // while a lower-privilege actor could escalate themselves. Editing
+    // your own profile with the role left unchanged (same role name)
+    // stays allowed so profile updates keep working.
+    if (id === actor?.id && role.name !== existing.role_name) {
+      throw ApiError.forbidden('You cannot change your own role');
+    }
+
+    if (rolePrivilege(role.name) > rolePrivilege(actor?.roleName)) {
+      throw ApiError.forbidden(
+        `You cannot assign the '${role.name}' role (higher privilege than your own)`
+      );
+    }
   }
   return userRepository.update(id, { fullName, email, phone: normalizedPhone, address: normalizedAddress, roleId });
 }
