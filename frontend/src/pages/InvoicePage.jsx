@@ -11,7 +11,7 @@ import EmptyState from '../components/EmptyState.jsx';
 import Pagination from '../components/Pagination.jsx';
 import Modal from '../components/Modal.jsx';
 import Spinner from '../components/Spinner.jsx';
-import { formatMoney, formatQuantity, formatDateOnly, formatDateTime } from '../utils/format.js';
+import { formatMoney, formatQuantity, formatDateOnly } from '../utils/format.js';
 
 const LIMIT = 20;
 
@@ -64,16 +64,7 @@ function PaymentTypeBadge({ type }) {
   return <span className="badge badge-default">{label}</span>;
 }
 
-function ReceiptRow({ label, value, strong = false, danger = false, className = '' }) {
-  return (
-    <div className={`receipt-total-line${strong ? ' is-strong' : ''}${danger ? ' is-danger' : ''}${className ? ` ${className}` : ''}`}>
-      <span>{label}</span>
-      <span>{value}</span>
-    </div>
-  );
-}
-
-function InvoiceSheet({ invoice }) {
+function InvoiceSheet({ invoice, printerType = 'a4', paperSize = '80mm' }) {
   const { t } = useLanguage();
   const customer = invoice.customer || null;
   const payments = invoice.payments ?? [];
@@ -97,6 +88,8 @@ function InvoiceSheet({ invoice }) {
       Number(credit.netCredit ?? credit.amount ?? 0) > 0
   );
 
+  const totalQuantity = invoice.items?.reduce((sum, item) => sum + Number(item.quantity || 0), 0) ?? 0;
+  const cashierName = invoice.createdBy?.username || payments.find((pmt) => pmt.receivedByName)?.receivedByName || '—';
   const stamp = dateTimeParts(invoice.saleDate);
   const saleTypeLabel = invoice.saleType === 'wholesale' ? t('pos.wholesale') : t('pos.retail');
   const shopName = shop.shopName || 'Vegetable Shop';
@@ -104,25 +97,148 @@ function InvoiceSheet({ invoice }) {
   const shopPhone = shop.phone || shop.shopPhone || '';
   const shopGstin = shop.gstin || shop.gstIn || '';
 
-  let methodLabel = '';
-  if (payments.length > 0) {
-    methodLabel = payments[0].method === 'credit'
-      ? t('pos.credit')
-      : PAYMENT_METHOD_LABELS[payments[0].method] || payments[0].method;
-  } else if (invoice.paymentType) {
-    methodLabel = PAYMENT_TYPE_LABELS[invoice.paymentType] || invoice.paymentType;
-  }
-
-  let paymentLabel = methodLabel || '—';
-  if (invoice.paymentType === 'partial') {
-    paymentLabel = methodLabel ? `${methodLabel} (${t('pos.partial')})` : t('pos.partial');
-  } else if (invoice.paymentType === 'credit') {
-    paymentLabel = t('pos.credit');
-  }
-
   const statusNote = balanceDue > 0
     ? `Outstanding balance: ${money(balanceDue)}`
     : '✓ Payment received successfully';
+
+  if (printerType === 'thermal') {
+    return (
+      <div className={`receipt receipt-thermal receipt-thermal-${paperSize.replace(/[^0-9]/g, '')}`}>
+        <div className="receipt-thermal-header">
+          <div className="receipt-brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 80 80" role="img" aria-hidden="true">
+              <path d="M41 11c-9 4-19 14-20 28-1 15 8 28 22 33 19-4 31-22 27-39-4-18-18-25-29-22Zm8 13c7 4 11 12 10 20-1 8-6 14-13 17-8-2-14-9-14-18 0-10 8-18 17-19Z" fill="currentColor" />
+            </svg>
+          </div>
+          <div className="receipt-shop">{shopName}</div>
+          <div className="receipt-tagline">Fresh Vegetables • Better Health</div>
+          {shopAddress ? <div className="receipt-thermal-meta-line">{shopAddress}</div> : null}
+          {shopPhone ? <div className="receipt-thermal-meta-line">{shopPhone}</div> : null}
+          {shopGstin ? <div className="receipt-thermal-meta-line">{shopGstin}</div> : null}
+        </div>
+
+        <div className="receipt-thermal-divider" />
+        <div className="receipt-thermal-title">INVOICE</div>
+        <div className="receipt-thermal-divider" />
+
+        <div className="receipt-thermal-meta">
+          <div className="receipt-thermal-row"><span>Bill No</span><strong>{invoice.invoiceNumber}</strong></div>
+          <div className="receipt-thermal-row"><span>Date</span><strong>{stamp.date}</strong></div>
+          <div className="receipt-thermal-row"><span>Time</span><strong>{stamp.time}</strong></div>
+          <div className="receipt-thermal-row"><span>Cashier</span><strong>{cashierName}</strong></div>
+          <div className="receipt-thermal-row"><span>Type</span><strong>{saleTypeLabel}</strong></div>
+          {customer ? (
+            <div className="receipt-thermal-row"><span>Customer</span><strong>{customer.name}</strong></div>
+          ) : (
+            <div className="receipt-thermal-row"><span>Customer</span><strong>{t('common.walkIn')}</strong></div>
+          )}
+        </div>
+
+        <div className="receipt-thermal-divider" />
+        <div className="receipt-thermal-table-head">
+          <span>ITEM</span>
+          <span>QTY</span>
+          <span>RATE</span>
+          <span>AMT</span>
+        </div>
+        <div className="receipt-thermal-divider" />
+        {invoice.items && invoice.items.length > 0 ? (
+          <div className="receipt-thermal-items">
+            {invoice.items.map((item, index) => (
+              <div key={item.productId ?? index} className="receipt-thermal-item">
+                <div className="receipt-thermal-item-main">
+                  <span className="receipt-thermal-item-name">{item.productName}</span>
+                  {item.productCode ? <span className="receipt-thermal-item-code">[{item.productCode}]</span> : null}
+                </div>
+                <div className="receipt-thermal-item-meta">
+                  <span>{formatQuantity(item.quantity)}{item.unit ? ` ${item.unit}` : ''}</span>
+                  <span>{money(item.unitPrice)}</span>
+                  <span>{money(item.lineTotal)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="receipt-thermal-divider" />
+        <div className="receipt-thermal-totals">
+          <div className="receipt-thermal-row"><span>Total Qty</span><strong>{formatQuantity(totalQuantity)}</strong></div>
+          <div className="receipt-thermal-row"><span>Subtotal</span><strong>{money(invoice.subtotal)}</strong></div>
+          {Number(invoice.discountAmount) > 0 ? (
+            <div className="receipt-thermal-row"><span>Discount</span><strong>{money(invoice.discountAmount)}</strong></div>
+          ) : null}
+          {hasGst && !interState && cgst > 0 ? (
+            <div className="receipt-thermal-row"><span>CGST</span><strong>{money(cgst)}</strong></div>
+          ) : null}
+          {hasGst && !interState && sgst > 0 ? (
+            <div className="receipt-thermal-row"><span>SGST</span><strong>{money(sgst)}</strong></div>
+          ) : null}
+          {hasGst && interState && igst > 0 ? (
+            <div className="receipt-thermal-row"><span>IGST</span><strong>{money(igst)}</strong></div>
+          ) : null}
+          {hasGst ? (
+            <div className="receipt-thermal-row"><span>Tax (GST)</span><strong>{money(invoice.taxAmount)}</strong></div>
+          ) : null}
+        </div>
+        <div className="receipt-thermal-divider" />
+        <div className="receipt-thermal-row receipt-thermal-row-total"><span>Grand Total</span><strong>{money(invoice.totalAmount)}</strong></div>
+        <div className="receipt-thermal-row"><span>Paid</span><strong>{money(invoice.amountPaid)}</strong></div>
+        {balanceDue > 0 ? (
+          <div className="receipt-thermal-row receipt-thermal-row-due"><span>Balance Due</span><strong>{money(balanceDue)}</strong></div>
+        ) : (
+          <div className="receipt-thermal-row"><span>Balance Due</span><strong>{money(0)}</strong></div>
+        )}
+        <div className="receipt-thermal-divider" />
+
+        {payments.length > 0 ? (
+          <>
+            <div className="receipt-thermal-section-title">PAYMENT</div>
+            {payments.map((pmt, index) => {
+              const pmtStamp = dateTimeParts(pmt.paymentDate);
+              return (
+                <div key={pmt.id ?? index} className="receipt-thermal-payment-block">
+                  <div className="receipt-thermal-row"><span>Method</span><strong>{pmt.method === 'credit' ? t('pos.credit') : PAYMENT_METHOD_LABELS[pmt.method] || pmt.method}</strong></div>
+                  <div className="receipt-thermal-row"><span>Amount</span><strong>{money(pmt.amount)}</strong></div>
+                  <div className="receipt-thermal-row"><span>Date</span><strong>{pmtStamp.date}</strong></div>
+                  <div className="receipt-thermal-row"><span>Time</span><strong>{pmtStamp.time}</strong></div>
+                  <div className="receipt-thermal-row"><span>User</span><strong>{pmt.receivedByName || '—'}</strong></div>
+                </div>
+              );
+            })}
+            <div className="receipt-thermal-divider" />
+          </>
+        ) : null}
+
+        {balanceDue > 0 ? (
+          <div className="receipt-status warning" style={{ marginTop: '8px', alignSelf: 'center' }}>
+            Outstanding balance: {money(balanceDue)}
+          </div>
+        ) : (
+          <div className="receipt-status success" style={{ marginTop: '8px', alignSelf: 'center' }}>
+            ✓ Payment received successfully
+          </div>
+        )}
+
+        {showCreditSection ? (
+          <>
+            <div className="receipt-thermal-divider" />
+            <div className="receipt-thermal-section-title">CREDIT</div>
+            <div className="receipt-thermal-row"><span>Customer</span><strong>{customer ? customer.name : t('common.walkIn')}</strong></div>
+            <div className="receipt-thermal-row"><span>Credit</span><strong>{money(Number(credit.netCredit ?? credit.amount ?? 0))}</strong></div>
+            <div className="receipt-thermal-row"><span>Outstanding</span><strong>{money(balanceDue)}</strong></div>
+            <div className="receipt-thermal-row"><span>Status</span><strong>Outstanding</strong></div>
+          </>
+        ) : null}
+
+        <div className="receipt-thermal-footer">
+          <div className="receipt-thanks">Thank You For Your Business!</div>
+          <div className="receipt-foot-shop">{shopName}</div>
+          <div className="receipt-sub">Invoice #{invoice.invoiceNumber} · {invoice.createdBy?.username || '—'} </div>
+          <div className="receipt-sub">{stamp.date}</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="receipt">
@@ -148,6 +264,7 @@ function InvoiceSheet({ invoice }) {
           <div className="receipt-header-line"><span>{t('invoice.billNo')}</span><strong>{invoice.invoiceNumber}</strong></div>
           <div className="receipt-header-line"><span>{t('invoice.date')}</span><strong>{stamp.date}</strong></div>
           <div className="receipt-header-line"><span>{t('invoice.time')}</span><strong>{stamp.time}</strong></div>
+          <div className="receipt-header-line"><span>{t('invoice.cashier') || 'Cashier'}</span><strong>{cashierName}</strong></div>
           <div className="receipt-header-line"><span>{t('invoice.type')}</span><strong>{saleTypeLabel}</strong></div>
         </div>
       </div>
@@ -228,6 +345,10 @@ function InvoiceSheet({ invoice }) {
           <div className="receipt-panel totals-panel">
             <div className="receipt-panel-title">{t('pos.total')}</div>
             <div className="receipt-total-box">
+              <div className="receipt-total-line">
+                <span>{t('pos.totalQty') || 'Total Qty'}</span>
+                <strong>{formatQuantity(totalQuantity)}</strong>
+              </div>
               <div className="receipt-total-line">
                 <span>{t('pos.subtotal')}</span>
                 <strong>{money(invoice.subtotal)}</strong>
@@ -614,7 +735,7 @@ export default function InvoicePage() {
                 </div>
               ) : null}
 
-              <InvoiceSheet invoice={detail} />
+              <InvoiceSheet invoice={detail} printerType={printerType} paperSize={paperSize} />
             </div>
           ) : null}
         </Modal>
@@ -623,7 +744,7 @@ export default function InvoicePage() {
       {detail
         ? createPortal(
             <div id="invoice-print-portal">
-              <InvoiceSheet invoice={detail} />
+              <InvoiceSheet invoice={detail} printerType={printerType} paperSize={paperSize} />
             </div>,
             document.body
           )
