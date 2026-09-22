@@ -27,8 +27,12 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- a dev/test database. Never run this against a production database.
 DROP TABLE IF EXISTS audit_logs;
 DROP TABLE IF EXISTS payments;
+DROP TABLE IF EXISTS purchase_return_items;
+DROP TABLE IF EXISTS purchase_returns;
 DROP TABLE IF EXISTS sale_return_items;
 DROP TABLE IF EXISTS sale_returns;
+DROP TABLE IF EXISTS pre_booking_items;
+DROP TABLE IF EXISTS pre_bookings;
 DROP TABLE IF EXISTS sale_items;
 DROP TABLE IF EXISTS sales;
 DROP TABLE IF EXISTS stock_transactions;
@@ -43,6 +47,7 @@ DROP TABLE IF EXISTS expenses;
 DROP TABLE IF EXISTS settings;
 DROP TABLE IF EXISTS user_permissions;
 DROP TABLE IF EXISTS permissions;
+DROP TABLE IF EXISTS branch_products;
 DROP TABLE IF EXISTS product_variants;
 DROP TABLE IF EXISTS products;
 DROP TABLE IF EXISTS tax_codes;
@@ -51,8 +56,34 @@ DROP TABLE IF EXISTS suppliers;
 DROP TABLE IF EXISTS customers;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS roles;
+DROP TABLE IF EXISTS branches;
 
 SET FOREIGN_KEY_CHECKS = 1;
+
+-- =====================================================================
+-- 0. BRANCHES
+-- A branch is a physical shop location (Main Branch + any user-created
+-- branches). Disabled (not deleted) via `status`, so historical
+-- sales/purchases/stock rows tied to a branch stay resolvable. Address/
+-- phone/invoice header fields are branch-specific and print on that
+-- branch's invoices and order slips.
+-- =====================================================================
+CREATE TABLE branches (
+    id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name            VARCHAR(150) NOT NULL,
+    is_main         TINYINT(1)   NOT NULL DEFAULT 0,
+    address         VARCHAR(255) NULL,
+    phone           VARCHAR(20)  NULL,
+    gstin           VARCHAR(20)  NULL,
+    invoice_header  VARCHAR(255) NULL,
+    invoice_footer  VARCHAR(255) NULL,
+    status          ENUM('active','inactive') NOT NULL DEFAULT 'active',
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT uq_branches_name UNIQUE (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_branches_status ON branches(status);
 
 -- =====================================================================
 -- 1. ROLES
@@ -312,6 +343,31 @@ CREATE INDEX idx_product_variants_active ON product_variants(is_active);
 CREATE INDEX idx_product_variants_name ON product_variants(variant_name);
 
 -- =====================================================================
+-- 8AB. BRANCH_PRODUCTS
+-- Which branches a product is available/sellable in. The product
+-- master is never duplicated per branch; this join table is the only
+-- per-branch availability signal. A product with no row here is not
+-- available in ANY branch (POS/Products/Stock/Reports for a branch
+-- must filter through this table, never show all products globally).
+-- =====================================================================
+CREATE TABLE branch_products (
+    id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    branch_id       INT UNSIGNED NOT NULL,
+    product_id      INT UNSIGNED NOT NULL,
+    is_active       TINYINT(1) NOT NULL DEFAULT 1,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT uq_branch_products UNIQUE (branch_id, product_id),
+    CONSTRAINT fk_branch_products_branch FOREIGN KEY (branch_id) REFERENCES branches(id)
+        ON UPDATE CASCADE ON DELETE CASCADE,
+    CONSTRAINT fk_branch_products_product FOREIGN KEY (product_id) REFERENCES products(id)
+        ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_branch_products_product ON branch_products(product_id);
+CREATE INDEX idx_branch_products_active ON branch_products(branch_id, is_active);
+
+-- =====================================================================
 -- 8B. PURCHASE ORDERS
 -- Two-stage procurement: a PO records intent to buy from a supplier and
 -- has NO stock effect by itself. Stock moves only when goods are
@@ -323,6 +379,7 @@ CREATE INDEX idx_product_variants_name ON product_variants(variant_name);
 -- =====================================================================
 CREATE TABLE purchase_orders (
     id                      INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    branch_id               INT UNSIGNED NOT NULL,
     po_number               VARCHAR(50)  NOT NULL,
     supplier_id             INT UNSIGNED NOT NULL,
     order_date              DATE NOT NULL,
@@ -333,12 +390,15 @@ CREATE TABLE purchase_orders (
     created_at              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT uq_purchase_orders_po_number UNIQUE (po_number),
+    CONSTRAINT fk_purchase_orders_branch FOREIGN KEY (branch_id) REFERENCES branches(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT fk_purchase_orders_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
         ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT fk_purchase_orders_created_by FOREIGN KEY (created_by) REFERENCES users(id)
         ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE INDEX idx_purchase_orders_branch ON purchase_orders(branch_id);
 CREATE INDEX idx_purchase_orders_supplier ON purchase_orders(supplier_id);
 CREATE INDEX idx_purchase_orders_date ON purchase_orders(order_date);
 CREATE INDEX idx_purchase_orders_status ON purchase_orders(status);
@@ -385,6 +445,7 @@ CREATE INDEX idx_purchase_order_items_product ON purchase_order_items(product_id
 -- =====================================================================
 CREATE TABLE purchases (
     id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    branch_id       INT UNSIGNED NOT NULL,
     supplier_id     INT UNSIGNED NOT NULL,
     purchase_order_id INT UNSIGNED NULL,
     invoice_number  VARCHAR(50)  NOT NULL,
@@ -401,6 +462,8 @@ CREATE TABLE purchases (
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT uq_purchases_supplier_invoice UNIQUE (supplier_id, invoice_number),
+    CONSTRAINT fk_purchases_branch FOREIGN KEY (branch_id) REFERENCES branches(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT fk_purchases_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
         ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT fk_purchases_purchase_order FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id)
@@ -410,6 +473,7 @@ CREATE TABLE purchases (
     CONSTRAINT chk_purchases_amounts CHECK (total_amount >= 0 AND paid_amount >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE INDEX idx_purchases_branch ON purchases(branch_id);
 CREATE INDEX idx_purchases_supplier ON purchases(supplier_id);
 CREATE INDEX idx_purchases_purchase_order ON purchases(purchase_order_id);
 CREATE INDEX idx_purchases_date ON purchases(purchase_date);
@@ -450,16 +514,20 @@ CREATE INDEX idx_purchase_items_variant ON purchase_items(variant_id);
 -- =====================================================================
 CREATE TABLE stock (
     id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    branch_id       INT UNSIGNED NOT NULL,
     product_id      INT UNSIGNED NOT NULL,
     variant_id      INT UNSIGNED NOT NULL DEFAULT 0,
     quantity        DECIMAL(10,3) NOT NULL DEFAULT 0.000,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    CONSTRAINT uq_stock_product_variant UNIQUE (product_id, variant_id),
+    CONSTRAINT uq_stock_branch_product_variant UNIQUE (branch_id, product_id, variant_id),
+    CONSTRAINT fk_stock_branch FOREIGN KEY (branch_id) REFERENCES branches(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT fk_stock_product FOREIGN KEY (product_id) REFERENCES products(id)
         ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT chk_stock_quantity CHECK (quantity >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE INDEX idx_stock_branch ON stock(branch_id);
 CREATE INDEX idx_stock_variant ON stock(variant_id);
 
 -- =====================================================================
@@ -471,6 +539,7 @@ CREATE INDEX idx_stock_variant ON stock(variant_id);
 -- =====================================================================
 CREATE TABLE stock_transactions (
     id                  BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    branch_id           INT UNSIGNED NOT NULL,
     product_id          INT UNSIGNED NOT NULL,
     variant_id          INT UNSIGNED NOT NULL DEFAULT 0,
     transaction_type    ENUM('purchase','sale','return_purchase','return_sale','adjustment','cancellation_reversal','damage') NOT NULL,
@@ -482,6 +551,8 @@ CREATE TABLE stock_transactions (
     note                VARCHAR(255) NULL,
     created_by          INT UNSIGNED NOT NULL,
     created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_stock_tx_branch FOREIGN KEY (branch_id) REFERENCES branches(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT fk_stock_tx_product FOREIGN KEY (product_id) REFERENCES products(id)
         ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT fk_stock_tx_created_by FOREIGN KEY (created_by) REFERENCES users(id)
@@ -489,6 +560,7 @@ CREATE TABLE stock_transactions (
     CONSTRAINT chk_stock_tx_after CHECK (quantity_after >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE INDEX idx_stock_tx_branch ON stock_transactions(branch_id);
 CREATE INDEX idx_stock_tx_product ON stock_transactions(product_id);
 CREATE INDEX idx_stock_tx_variant ON stock_transactions(variant_id);
 CREATE INDEX idx_stock_tx_reference ON stock_transactions(reference_table, reference_id);
@@ -527,6 +599,7 @@ CREATE INDEX idx_product_price_history_product_effective ON product_price_histor
 -- =====================================================================
 CREATE TABLE sales (
     id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    branch_id       INT UNSIGNED NOT NULL,
     customer_id     INT UNSIGNED NULL, -- NULL = walk-in / cash customer
     invoice_number  VARCHAR(50) NOT NULL,
     sale_date       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -546,6 +619,8 @@ CREATE TABLE sales (
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT uq_sales_invoice_number UNIQUE (invoice_number),
+    CONSTRAINT fk_sales_branch FOREIGN KEY (branch_id) REFERENCES branches(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT fk_sales_customer FOREIGN KEY (customer_id) REFERENCES customers(id)
         ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT fk_sales_created_by FOREIGN KEY (created_by) REFERENCES users(id)
@@ -556,6 +631,7 @@ CREATE TABLE sales (
     )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE INDEX idx_sales_branch ON sales(branch_id);
 CREATE INDEX idx_sales_customer ON sales(customer_id);
 CREATE INDEX idx_sales_date ON sales(sale_date);
 CREATE INDEX idx_sales_status ON sales(status);
@@ -810,6 +886,134 @@ CREATE TABLE sale_return_items (
 CREATE INDEX idx_sale_return_items_return ON sale_return_items(return_id);
 CREATE INDEX idx_sale_return_items_sale_item ON sale_return_items(sale_item_id);
 CREATE INDEX idx_sale_return_items_product ON sale_return_items(product_id);
+
+-- =====================================================================
+-- 18B. PURCHASE_RETURNS
+-- One row per return event against a completed purchase (goods sent
+-- back to the supplier). A return REDUCES stock (stock_transactions
+-- 'return_purchase', ref 'purchases') and reduces what the shop owes
+-- that supplier - it never creates a payment FROM the shop TO the
+-- supplier. adjustment_amount is the payable reduction, applied via
+-- the existing supplier payment/credit architecture (a payments row is
+-- never inserted for the shop; suppliers.opening_balance and payable
+-- reporting are derived the same way purchases already reduce/raise
+-- payable, just in the opposite direction here).
+-- =====================================================================
+CREATE TABLE purchase_returns (
+    id                INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    purchase_id       INT UNSIGNED NOT NULL,
+    return_date       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reason            VARCHAR(255) NULL,
+    adjustment_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    created_by        INT UNSIGNED NOT NULL,
+    created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_purchase_returns_purchase FOREIGN KEY (purchase_id) REFERENCES purchases(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT fk_purchase_returns_created_by FOREIGN KEY (created_by) REFERENCES users(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT chk_purchase_returns_adjustment CHECK (adjustment_amount >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_purchase_returns_purchase ON purchase_returns(purchase_id);
+CREATE INDEX idx_purchase_returns_created_at ON purchase_returns(created_at);
+
+-- =====================================================================
+-- 18C. PURCHASE_RETURN_ITEMS
+-- Returned line items frozen at the ORIGINAL purchase unit_cost, same
+-- frozen-snapshot invariant as sale_return_items. Over-returning is
+-- prevented by the module's per-item guard (already-returned +
+-- requested <= received quantity) inside the return transaction.
+-- =====================================================================
+CREATE TABLE purchase_return_items (
+    id               INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    return_id        INT UNSIGNED NOT NULL,
+    purchase_item_id INT UNSIGNED NOT NULL,
+    product_id       INT UNSIGNED NOT NULL,
+    variant_id       INT UNSIGNED NOT NULL DEFAULT 0,
+    quantity         DECIMAL(10,3) NOT NULL,
+    unit_cost        DECIMAL(10,2) NOT NULL,
+    line_total       DECIMAL(12,2) NOT NULL,
+    created_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_purchase_return_items_return FOREIGN KEY (return_id) REFERENCES purchase_returns(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT fk_purchase_return_items_purchase_item FOREIGN KEY (purchase_item_id) REFERENCES purchase_items(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT fk_purchase_return_items_product FOREIGN KEY (product_id) REFERENCES products(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT chk_purchase_return_items_quantity CHECK (quantity > 0),
+    CONSTRAINT chk_purchase_return_items_line_total CHECK (line_total >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_purchase_return_items_return ON purchase_return_items(return_id);
+CREATE INDEX idx_purchase_return_items_purchase_item ON purchase_return_items(purchase_item_id);
+CREATE INDEX idx_purchase_return_items_product ON purchase_return_items(product_id);
+
+-- =====================================================================
+-- 18D. PRE_BOOKINGS
+-- Customer pre-booking / advance order, created BEFORE fulfillment.
+-- Creating or editing a pre-booking has NO stock, revenue, or payment
+-- effect - it is a promise, not a sale. Only converting it (status ->
+-- 'converted', with converted_sale_id set) creates a real sale via the
+-- existing sale-creation path, at which point normal stock/revenue/
+-- payment rules apply exactly as any other sale. Printable order slips
+-- read directly off this table and are visually distinct from a tax
+-- invoice (no tax/invoice numbering is ever generated for a booking).
+-- =====================================================================
+CREATE TABLE pre_bookings (
+    id                INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    branch_id         INT UNSIGNED NOT NULL,
+    booking_number    VARCHAR(50)  NOT NULL,
+    customer_id       INT UNSIGNED NULL,
+    customer_name     VARCHAR(150) NULL, -- fallback for a non-registered customer
+    customer_phone    VARCHAR(20)  NULL,
+    booking_date      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    needed_by_date    DATE NULL,
+    notes             VARCHAR(255) NULL,
+    status            ENUM('pending','converted','cancelled') NOT NULL DEFAULT 'pending',
+    converted_sale_id INT UNSIGNED NULL,
+    converted_at      DATETIME NULL,
+    created_by        INT UNSIGNED NOT NULL,
+    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT uq_pre_bookings_number UNIQUE (booking_number),
+    CONSTRAINT fk_pre_bookings_branch FOREIGN KEY (branch_id) REFERENCES branches(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT fk_pre_bookings_customer FOREIGN KEY (customer_id) REFERENCES customers(id)
+        ON UPDATE CASCADE ON DELETE SET NULL,
+    CONSTRAINT fk_pre_bookings_converted_sale FOREIGN KEY (converted_sale_id) REFERENCES sales(id)
+        ON UPDATE CASCADE ON DELETE SET NULL,
+    CONSTRAINT fk_pre_bookings_created_by FOREIGN KEY (created_by) REFERENCES users(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_pre_bookings_branch ON pre_bookings(branch_id);
+CREATE INDEX idx_pre_bookings_status ON pre_bookings(status);
+CREATE INDEX idx_pre_bookings_customer ON pre_bookings(customer_id);
+
+-- =====================================================================
+-- 18E. PRE_BOOKING_ITEMS
+-- Requested lines of a pre-booking. unit_price is an indicative price
+-- shown on the order slip only - the REAL price is resolved fresh
+-- (current retail/wholesale price, GST, variant) at conversion time,
+-- exactly like any other POS sale line.
+-- =====================================================================
+CREATE TABLE pre_booking_items (
+    id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    pre_booking_id  INT UNSIGNED NOT NULL,
+    product_id      INT UNSIGNED NOT NULL,
+    variant_id      INT UNSIGNED NOT NULL DEFAULT 0,
+    quantity        DECIMAL(10,3) NOT NULL,
+    unit_price      DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_pre_booking_items_booking FOREIGN KEY (pre_booking_id) REFERENCES pre_bookings(id)
+        ON UPDATE CASCADE ON DELETE CASCADE,
+    CONSTRAINT fk_pre_booking_items_product FOREIGN KEY (product_id) REFERENCES products(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT chk_pre_booking_items_quantity CHECK (quantity > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_pre_booking_items_booking ON pre_booking_items(pre_booking_id);
+CREATE INDEX idx_pre_booking_items_product ON pre_booking_items(product_id);
 
 -- =====================================================================
 -- 19. EXPENSES
