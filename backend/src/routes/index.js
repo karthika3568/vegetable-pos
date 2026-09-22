@@ -2,6 +2,7 @@ const router = require('express').Router();
 
 router.use('/public', require('./public.routes'));
 router.use('/auth', require('./auth.routes'));
+router.use('/branches', require('./branches.routes'));
 router.use('/users', require('./users.routes'));
 router.use('/roles', require('./roles.routes'));
 router.use('/permissions', require('./permissions.routes'));
@@ -14,6 +15,7 @@ router.use('/purchase-orders', require('./purchase-orders.routes'));
 router.use('/stock', require('./stock.routes'));
 router.use('/sales', require('./sales.routes'));
 router.use('/pos', require('./pos.routes'));
+router.use('/pre-bookings', require('./pre-bookings.routes'));
 router.use('/credits', require('./credit.routes'));
 router.use('/invoices', require('./invoice.routes'));
 router.use('/expenses', require('./expenses.routes'));

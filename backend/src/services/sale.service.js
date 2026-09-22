@@ -93,6 +93,7 @@ function toDateString(value) {
 }
 
 async function list({
+  branchId,
   search,
   customerId,
   fromDate,
@@ -105,6 +106,7 @@ async function list({
   const offset = (page - 1) * limit;
 
   const { rows, total } = await saleRepository.findAll({
+    branchId,
     search,
     customerId,
     fromDate: fromDate ? toDateString(fromDate) : undefined,
@@ -182,6 +184,7 @@ function resolveProductRates(product, isIntraState, flatRate) {
 }
 
 async function create({
+  branchId,
   customerId,
   saleDate,
   saleType = 'retail',
@@ -192,6 +195,10 @@ async function create({
   createdBy,
   hasCreditPermission = false,
 }) {
+  if (!branchId) {
+    throw ApiError.badRequest('branchId is required to create a sale');
+  }
+
   let customerState = null;
   if (customerId) {
     const customer = await ensureCustomerActive(customerId);
@@ -480,6 +487,7 @@ async function create({
   }
 
   return saleRepository.create({
+    branchId,
     customerId,
     saleDate: toSqlDateTime(saleDateValue),
     saleType,

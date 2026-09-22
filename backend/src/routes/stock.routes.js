@@ -6,10 +6,12 @@ const stockValidator = require('../validators/stock.validator');
 const validate = require('../middleware/validate');
 const authenticate = require('../middleware/authenticate');
 const authorize = require('../middleware/authorize');
+const { requireBranch } = require('../middleware/branchScope');
+
+router.use(authenticate, requireBranch);
 
 router.get(
   '/',
-  authenticate,
   authorize('stock.view'),
   stockValidator.list,
   validate,
@@ -18,7 +20,6 @@ router.get(
 
 router.get(
   '/:productId',
-  authenticate,
   authorize('stock.view'),
   stockValidator.getByProduct,
   validate,
@@ -27,7 +28,6 @@ router.get(
 
 router.get(
   '/:productId/transactions',
-  authenticate,
   authorize('stock.view'),
   stockValidator.transactions,
   validate,
@@ -36,7 +36,6 @@ router.get(
 
 router.patch(
   '/:productId/adjust',
-  authenticate,
   authorize('stock.adjust'),
   stockValidator.adjust,
   validate,
@@ -45,7 +44,6 @@ router.patch(
 
 router.post(
   '/:productId/damage',
-  authenticate,
   authorize('stock.adjust'),
   stockValidator.damage,
   validate,

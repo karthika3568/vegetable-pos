@@ -6,11 +6,13 @@ const purchaseOrderValidator = require('../validators/purchase-order.validator')
 const validate = require('../middleware/validate');
 const authenticate = require('../middleware/authenticate');
 const authorize = require('../middleware/authorize');
+const { requireBranch, resolveBranch } = require('../middleware/branchScope');
 
 router.get(
   '/',
   authenticate,
   authorize('purchases.view'),
+  resolveBranch,
   purchaseOrderValidator.list,
   validate,
   purchaseOrderController.list
@@ -29,6 +31,7 @@ router.post(
   '/',
   authenticate,
   authorize('purchases.create'),
+  requireBranch,
   purchaseOrderValidator.create,
   validate,
   purchaseOrderController.create

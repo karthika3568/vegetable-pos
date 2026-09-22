@@ -41,6 +41,7 @@ function to3(value) {
 }
 
 async function list({
+  branchId,
   search,
   supplierId,
   fromDate,
@@ -52,6 +53,7 @@ async function list({
   const offset = (page - 1) * limit;
 
   const { rows, total } = await purchaseOrderRepository.findAll({
+    branchId,
     search,
     supplierId,
     fromDate: fromDate ? toDateString(fromDate) : undefined,
@@ -151,6 +153,7 @@ async function validateItems(items) {
 }
 
 async function create({
+  branchId,
   supplierId,
   orderDate,
   expectedDeliveryDate,
@@ -158,10 +161,15 @@ async function create({
   items,
   createdBy,
 }) {
+  if (!branchId) {
+    throw ApiError.badRequest('branchId is required to create a purchase order');
+  }
+
   await ensureSupplierActive(supplierId);
   const normalizedItems = await validateItems(items);
 
   return purchaseOrderRepository.create({
+    branchId,
     supplierId,
     orderDate: toDateString(orderDate),
     expectedDeliveryDate: expectedDeliveryDate ? toDateString(expectedDeliveryDate) : null,

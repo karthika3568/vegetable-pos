@@ -165,6 +165,10 @@ async function findActiveByProductIds(productIds) {
   }
 
   const placeholders = productIds.map(() => '?').join(',');
+  // Branch-agnostic total (stock now has one row PER BRANCH per
+  // product/variant) - a plain LEFT JOIN would multiply rows across
+  // branches, so this sums across every branch via a subquery instead,
+  // same fix as product.repository.js's BASE_SELECT.
   const [rows] = await pool.query(
     `SELECT
        pv.id,
@@ -172,11 +176,8 @@ async function findActiveByProductIds(productIds) {
        pv.variant_name,
        pv.selling_price,
        CASE WHEN pv.is_active = 1 THEN 'active' ELSE 'inactive' END AS status,
-       COALESCE(s.quantity, 0) AS current_stock
+       COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = pv.product_id AND s.variant_id = pv.id), 0) AS current_stock
      FROM product_variants pv
-     LEFT JOIN stock s
-       ON s.product_id = pv.product_id
-      AND s.variant_id = pv.id
      WHERE pv.product_id IN (${placeholders})
        AND pv.is_active = 1
      ORDER BY pv.product_id, pv.variant_name ASC`,

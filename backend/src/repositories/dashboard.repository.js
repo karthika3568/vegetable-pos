@@ -32,8 +32,18 @@ const { pool } = require('../config/db');
 
 const ACTIVE = `s.status IN ('completed','returned')`;
 
-async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
+async function getDashboard({ branchId, fromDate, toDate, toDateExclusive, top }) {
   const conn = await pool.getConnection();
+
+  // Branch scoping (best-effort pass): when branchId is supplied every
+  // sales/purchases/stock/stock_transactions query below is additionally
+  // filtered to that branch; when omitted the dashboard stays
+  // shop-wide (all branches), matching pre-multi-branch behaviour.
+  const salesBranchSql = branchId ? 'AND s.branch_id = ?' : '';
+  const purchasesBranchSql = branchId ? 'AND pu.branch_id = ?' : '';
+  const stockBranchSql = branchId ? 'AND st.branch_id = ?' : '';
+  const txBranchSql = branchId ? 'AND branch_id = ?' : '';
+  const poBranchSql = branchId ? 'AND po.branch_id = ?' : '';
 
   try {
     await conn.beginTransaction();
@@ -58,8 +68,8 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
          COALESCE(SUM(CASE WHEN ${ACTIVE} AND s.payment_type = 'credit' THEN s.total_amount ELSE 0 END), 0) AS credit_sales,
          COALESCE(SUM(CASE WHEN ${ACTIVE} THEN s.balance_due ELSE 0 END), 0) AS outstanding_from_sales
        FROM sales s
-       WHERE s.sale_date >= ? AND s.sale_date < ?`,
-      [fromDate, toDateExclusive]
+       WHERE s.sale_date >= ? AND s.sale_date < ? ${salesBranchSql}`,
+      branchId ? [fromDate, toDateExclusive, branchId] : [fromDate, toDateExclusive]
     );
 
     // ---- SALES RETURNS (refund reduction for in-window active sales) ----
@@ -67,8 +77,8 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
       `SELECT COALESCE(SUM(r.refund_amount), 0) AS refund_total
        FROM sale_returns r
        JOIN sales s ON s.id = r.sale_id
-       WHERE ${ACTIVE} AND s.sale_date >= ? AND s.sale_date < ?`,
-      [fromDate, toDateExclusive]
+       WHERE ${ACTIVE} AND s.sale_date >= ? AND s.sale_date < ? ${salesBranchSql}`,
+      branchId ? [fromDate, toDateExclusive, branchId] : [fromDate, toDateExclusive]
     );
 
     // ---- CASH RECEIVED (sale payments only; credit collections and
@@ -79,8 +89,8 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
        JOIN sales s ON s.id = p.sale_id
        WHERE p.payment_type = 'sale_payment'
          AND ${ACTIVE}
-         AND s.sale_date >= ? AND s.sale_date < ?`,
-      [fromDate, toDateExclusive]
+         AND s.sale_date >= ? AND s.sale_date < ? ${salesBranchSql}`,
+      branchId ? [fromDate, toDateExclusive, branchId] : [fromDate, toDateExclusive]
     );
 
     // ---- PURCHASES (DATE inclusive; completed only for totals) ----
@@ -92,16 +102,16 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
          COALESCE(SUM(CASE WHEN pu.status = 'completed' THEN pu.total_amount - pu.paid_amount ELSE 0 END), 0) AS due_amount,
          COALESCE(SUM(CASE WHEN pu.status = 'completed' AND pu.payment_status IN ('unpaid','partial') THEN 1 ELSE 0 END), 0) AS unpaid_count
        FROM purchases pu
-       WHERE pu.purchase_date >= ? AND pu.purchase_date <= ?`,
-      [fromDate, toDate]
+       WHERE pu.purchase_date >= ? AND pu.purchase_date <= ? ${purchasesBranchSql}`,
+      branchId ? [fromDate, toDate, branchId] : [fromDate, toDate]
     );
 
     const [[purchaseQty]] = await conn.query(
       `SELECT COALESCE(SUM(pi.quantity), 0) AS quantity
        FROM purchase_items pi
        JOIN purchases pu ON pu.id = pi.purchase_id
-       WHERE pu.status = 'completed' AND pu.purchase_date >= ? AND pu.purchase_date <= ?`,
-      [fromDate, toDate]
+       WHERE pu.status = 'completed' AND pu.purchase_date >= ? AND pu.purchase_date <= ? ${purchasesBranchSql}`,
+      branchId ? [fromDate, toDate, branchId] : [fromDate, toDate]
     );
 
     // ---- EXPENSES / INCOME (DATE inclusive) ----
@@ -118,6 +128,9 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
     );
 
     // ---- STOCK KPI (current snapshot + low stock + value) ----
+    // Branch-scoped: joins only that branch's stock row per product (and
+    // COUNT(*) below counts a row per product regardless, since the LEFT
+    // JOIN condition itself carries the branch filter).
     const [[stock]] = await conn.query(
       `SELECT
          COUNT(*) AS total_products,
@@ -128,8 +141,8 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
          COALESCE(SUM(CASE WHEN COALESCE(st.quantity, 0) <= 0 THEN 1 ELSE 0 END), 0) AS out_of_stock_count,
          COALESCE(SUM(COALESCE(st.quantity, 0) * p.cost_price), 0) AS inventory_value
        FROM products p
-       LEFT JOIN stock st ON st.product_id = p.id`,
-      [lowStockDefault, lowStockDefault]
+       LEFT JOIN stock st ON st.product_id = p.id ${branchId ? 'AND st.branch_id = ?' : ''}`,
+      branchId ? [lowStockDefault, lowStockDefault, branchId] : [lowStockDefault, lowStockDefault]
     );
 
     // ---- STOCK PERIOD MOVEMENT (by created_at, half-open) ----
@@ -137,9 +150,9 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
       `SELECT transaction_type,
               COALESCE(SUM(ABS(quantity_change)), 0) AS abs_qty
        FROM stock_transactions
-       WHERE created_at >= ? AND created_at < ?
+       WHERE created_at >= ? AND created_at < ? ${txBranchSql}
        GROUP BY transaction_type`,
-      [fromDate, toDateExclusive]
+      branchId ? [fromDate, toDateExclusive, branchId] : [fromDate, toDateExclusive]
     );
 
     // ---- CREDIT PERIOD ACTIVITY (by created_at, half-open) ----
@@ -172,9 +185,9 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
        FROM sale_items si
        JOIN sales s ON s.id = si.sale_id
        JOIN products p ON p.id = si.product_id
-       WHERE ${ACTIVE} AND s.sale_date >= ? AND s.sale_date < ?
+       WHERE ${ACTIVE} AND s.sale_date >= ? AND s.sale_date < ? ${salesBranchSql}
        GROUP BY p.id, p.sku, p.name`,
-      [fromDate, toDateExclusive]
+      branchId ? [fromDate, toDateExclusive, branchId] : [fromDate, toDateExclusive]
     );
 
     const [productReturns] = await conn.query(
@@ -185,9 +198,9 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
        FROM sale_return_items sri
        JOIN sale_items si ON si.id = sri.sale_item_id
        JOIN sales s ON s.id = si.sale_id
-       WHERE ${ACTIVE} AND s.sale_date >= ? AND s.sale_date < ?
+       WHERE ${ACTIVE} AND s.sale_date >= ? AND s.sale_date < ? ${salesBranchSql}
        GROUP BY sri.product_id`,
-      [fromDate, toDateExclusive]
+      branchId ? [fromDate, toDateExclusive, branchId] : [fromDate, toDateExclusive]
     );
 
     // ---- TOP CUSTOMERS (named customers only, never walk-in) ----
@@ -199,9 +212,9 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
          COALESCE(SUM(s.paid_amount), 0) AS paid_amount
        FROM sales s
        JOIN customers c ON c.id = s.customer_id
-       WHERE s.customer_id IS NOT NULL AND ${ACTIVE} AND s.sale_date >= ? AND s.sale_date < ?
+       WHERE s.customer_id IS NOT NULL AND ${ACTIVE} AND s.sale_date >= ? AND s.sale_date < ? ${salesBranchSql}
        GROUP BY s.customer_id, c.name, c.phone`,
-      [fromDate, toDateExclusive]
+      branchId ? [fromDate, toDateExclusive, branchId] : [fromDate, toDateExclusive]
     );
 
     const [customerReturns] = await conn.query(
@@ -210,9 +223,9 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
          COALESCE(SUM(r.refund_amount), 0) AS returned_amount
        FROM sale_returns r
        JOIN sales s ON s.id = r.sale_id
-       WHERE s.customer_id IS NOT NULL AND ${ACTIVE} AND s.sale_date >= ? AND s.sale_date < ?
+       WHERE s.customer_id IS NOT NULL AND ${ACTIVE} AND s.sale_date >= ? AND s.sale_date < ? ${salesBranchSql}
        GROUP BY s.customer_id`,
-      [fromDate, toDateExclusive]
+      branchId ? [fromDate, toDateExclusive, branchId] : [fromDate, toDateExclusive]
     );
 
     // ---- HOURLY SALES (single-day windows only) ----
@@ -226,20 +239,20 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
         `SELECT HOUR(s.sale_date) AS hour_idx,
                 COALESCE(SUM(s.total_amount), 0) AS gross
          FROM sales s
-         WHERE ${ACTIVE} AND s.sale_date >= ? AND s.sale_date < ?
+         WHERE ${ACTIVE} AND s.sale_date >= ? AND s.sale_date < ? ${salesBranchSql}
          GROUP BY hour_idx
          ORDER BY hour_idx`,
-        [fromDate, toDateExclusive]
+        branchId ? [fromDate, toDateExclusive, branchId] : [fromDate, toDateExclusive]
       );
       const [hourlyReturns] = await conn.query(
         `SELECT HOUR(s.sale_date) AS hour_idx,
                 COALESCE(SUM(r.refund_amount), 0) AS refunds
          FROM sale_returns r
          JOIN sales s ON s.id = r.sale_id
-         WHERE ${ACTIVE} AND s.sale_date >= ? AND s.sale_date < ?
+         WHERE ${ACTIVE} AND s.sale_date >= ? AND s.sale_date < ? ${salesBranchSql}
          GROUP BY hour_idx
          ORDER BY hour_idx`,
-        [fromDate, toDateExclusive]
+        branchId ? [fromDate, toDateExclusive, branchId] : [fromDate, toDateExclusive]
       );
       hourlySales = { gross: hourlyGross, returns: hourlyReturns };
     }
@@ -253,9 +266,10 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
          (SELECT COUNT(*) FROM sale_items si WHERE si.sale_id = s.id) AS item_count
        FROM sales s
        LEFT JOIN customers c ON c.id = s.customer_id
+       ${branchId ? 'WHERE s.branch_id = ?' : ''}
        ORDER BY s.sale_date DESC, s.id DESC
        LIMIT ?`,
-      [top]
+      branchId ? [branchId, top] : [top]
     );
 
     const [recentPurchases] = await conn.query(
@@ -264,9 +278,10 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
          su.name AS supplier_name, pu.total_amount, pu.paid_amount, pu.status
        FROM purchases pu
        JOIN suppliers su ON su.id = pu.supplier_id
+       ${branchId ? 'WHERE pu.branch_id = ?' : ''}
        ORDER BY pu.purchase_date DESC, pu.id DESC
        LIMIT ?`,
-      [top]
+      branchId ? [branchId, top] : [top]
     );
 
     // ---- LOW STOCK ALERTS (uses the same effective-min rule as the KPI) ----
@@ -277,11 +292,11 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
          COALESCE(NULLIF(p.reorder_level, 0), ?) AS effective_min,
          CASE WHEN COALESCE(st.quantity, 0) <= 0 THEN 'out' ELSE 'low' END AS stock_status
        FROM products p
-       LEFT JOIN stock st ON st.product_id = p.id
+       LEFT JOIN stock st ON st.product_id = p.id ${branchId ? 'AND st.branch_id = ?' : ''}
        WHERE COALESCE(st.quantity, 0) <= COALESCE(NULLIF(p.reorder_level, 0), ?)
        ORDER BY COALESCE(st.quantity, 0) ASC, p.name ASC
        LIMIT 8`,
-      [lowStockDefault, lowStockDefault]
+      branchId ? [lowStockDefault, branchId, lowStockDefault] : [lowStockDefault, lowStockDefault]
     );
 
     // ---- RECENT STOCK MOVEMENTS (latest ledger rows) ----
@@ -292,11 +307,15 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
          tx.created_at
        FROM stock_transactions tx
        JOIN products p ON p.id = tx.product_id
+       ${branchId ? 'WHERE tx.branch_id = ?' : ''}
        ORDER BY tx.created_at DESC, tx.id DESC
-       LIMIT 6`
+       LIMIT 6`,
+      branchId ? [branchId] : []
     );
 
     // ---- CREDIT: top customers by live outstanding balance ----
+    // (Not branch-scoped: customers and credit are shop-wide entities,
+    // not tied to any one branch in the schema.)
     const [creditTopCustomers] = await conn.query(
       `SELECT c.id AS customer_id, c.name, c.phone, c.current_balance
        FROM customers c
@@ -314,10 +333,11 @@ async function getDashboard({ fromDate, toDate, toDateExclusive, top }) {
        FROM purchase_orders po
        JOIN suppliers su ON su.id = po.supplier_id
        LEFT JOIN purchase_order_items poi ON poi.purchase_order_id = po.id
-       WHERE po.status IN ('draft','sent','partially_received')
+       WHERE po.status IN ('draft','sent','partially_received') ${poBranchSql}
        GROUP BY po.id, po.po_number, po.status, po.order_date, po.expected_delivery_date, su.name
        ORDER BY (po.expected_delivery_date IS NULL) ASC, po.expected_delivery_date ASC, po.order_date ASC
-       LIMIT 3`
+       LIMIT 3`,
+      branchId ? [branchId] : []
     );
 
     // ---- EXPENSES: top categories in window ----

@@ -1,35 +1,38 @@
 /**
  * Stock repository - all raw SQL for stock lives here.
  *
- * Uses the existing schema (database/schema.sql):
- *   stock                 - one row per product (UNIQUE product_id):
- *                           product_id, quantity DECIMAL(10,3),
- *                           updated_at. CHECK quantity >= 0.
- *   stock_transactions    - immutable ledger: product_id, transaction_type
- *                           ENUM('purchase','sale','return_purchase',
- *                           'return_sale','adjustment','cancellation_reversal'),
+ * Uses the schema (database/schema.sql, migration 021):
+ *   stock                 - one row per (branch_id, product_id, variant_id):
+ *                           quantity DECIMAL(10,3), updated_at.
+ *                           CHECK quantity >= 0.
+ *   stock_transactions    - immutable ledger: branch_id, product_id,
+ *                           variant_id, transaction_type ENUM('purchase',
+ *                           'sale','return_purchase','return_sale',
+ *                           'adjustment','cancellation_reversal','damage'),
  *                           quantity_change (signed), quantity_before,
  *                           quantity_after, reference_table, reference_id,
  *                           note, created_by, created_at.
  *
- * Stock is product-level: `stock` and `stock_transactions` have NO
- * variant_id column. Product variants are master data only; stock and
- * purchases are scoped to products.
+ * Multi-branch (migration 021): stock is now scoped PER BRANCH - the
+ * same product has an independent quantity in every branch it is
+ * available in (uq_stock_branch_product_variant = branch_id + product_id
+ * + variant_id). Every function here takes a branchId and every SQL
+ * statement filters/writes by it; there is no "global" stock row.
  *
  * The reconciliation helper syncPurchaseStock() is the idempotency
  * mechanism used by the purchase module: it computes the CURRENT net
- * effect already recorded in the ledger for a purchase
- * (transaction_type IN purchase/cancellation_reversal) and applies only
- * the difference needed to reach the target status. Because it runs
- * inside the SAME transaction that writes the purchase, a completed
- * purchase can never double-increase stock and cancels/reversals can
- * never double-run - even if the same status request repeats.
+ * effect already recorded in the ledger for a purchase (transaction_type
+ * IN purchase/cancellation_reversal) and applies only the difference
+ * needed to reach the target status. Because it runs inside the SAME
+ * transaction that writes the purchase, a completed purchase can never
+ * double-increase stock and cancels/reversals can never double-run -
+ * even if the same status request repeats.
  *
  * Row safety: every movement reads `stock` with SELECT ... FOR UPDATE
  * inside the caller's transaction, so concurrent movements on one
- * product serialize and can never read stale quantities (e.g. lost
- * updates from two simultaneous adjustments). The CHECK constraint
- * (quantity >= 0, quantity_after >= 0) is the final backstop.
+ * (branch, product, variant) serialize and can never read stale
+ * quantities. The CHECK constraint (quantity >= 0, quantity_after >= 0)
+ * is the final backstop.
  */
 
 const { pool } = require('../config/db');
@@ -45,24 +48,25 @@ function to3(value) {
  * transaction so movements + ledger rows commit together).
  */
 
-async function ensureStockRow(conn, productId, variantId = 0) {
+async function ensureStockRow(conn, branchId, productId, variantId = 0) {
   await conn.query(
-    `INSERT INTO stock (product_id, variant_id, quantity)
-     VALUES (?, ?, 0)
+    `INSERT INTO stock (branch_id, product_id, variant_id, quantity)
+     VALUES (?, ?, ?, 0)
      ON DUPLICATE KEY UPDATE id = id`,
-    [productId, variantId ?? 0]
+    [branchId, productId, variantId ?? 0]
   );
 }
 
 /**
- * Apply one signed quantity change to a product's stock and record the
- * matching immutable ledger row. Uses FOR UPDATE so concurrent
- * movements serialize on the product row. Rejects any movement that
- * would push quantity below zero (before the CHECK constraint backs us
- * up). Returns { before, after, change }.
+ * Apply one signed quantity change to a product's stock IN ONE BRANCH
+ * and record the matching immutable ledger row. Uses FOR UPDATE so
+ * concurrent movements serialize on the (branch, product, variant) row.
+ * Rejects any movement that would push quantity below zero (before the
+ * CHECK constraint backs us up). Returns { before, after, change }.
  */
 async function applyChange({
   conn,
+  branchId,
   productId,
   variantId = 0,
   change,
@@ -72,6 +76,10 @@ async function applyChange({
   referenceId,
   createdBy,
 }) {
+  if (!branchId) {
+    throw ApiError.badRequest('branchId is required for a stock movement');
+  }
+
   const delta = to3(change);
 
   if (delta === 0) {
@@ -79,11 +87,11 @@ async function applyChange({
   }
 
   const resolvedVariantId = Number(variantId ?? 0);
-  await ensureStockRow(conn, productId, resolvedVariantId);
+  await ensureStockRow(conn, branchId, productId, resolvedVariantId);
 
   const [[row]] = await conn.query(
-    `SELECT quantity FROM stock WHERE product_id = ? AND variant_id = ? FOR UPDATE`,
-    [productId, resolvedVariantId]
+    `SELECT quantity FROM stock WHERE branch_id = ? AND product_id = ? AND variant_id = ? FOR UPDATE`,
+    [branchId, productId, resolvedVariantId]
   );
 
   const before = Number(row.quantity);
@@ -91,47 +99,49 @@ async function applyChange({
 
   if (after < 0) {
     throw ApiError.badRequest(
-      `Stock for product ${productId}${variantId ? ` variant ${variantId}` : ''} cannot go negative (${before} ${delta < 0 ? '-' : '+'} ${Math.abs(delta)} would result in ${after})`
+      `Stock for product ${productId}${variantId ? ` variant ${variantId}` : ''} in branch ${branchId} cannot go negative (${before} ${delta < 0 ? '-' : '+'} ${Math.abs(delta)} would result in ${after})`
     );
   }
 
   await conn.query(
-    `UPDATE stock SET quantity = ? WHERE product_id = ? AND variant_id = ?`,
-    [after, productId, resolvedVariantId]
+    `UPDATE stock SET quantity = ? WHERE branch_id = ? AND product_id = ? AND variant_id = ?`,
+    [after, branchId, productId, resolvedVariantId]
   );
 
   await conn.query(
     `INSERT INTO stock_transactions
-       (product_id, variant_id, transaction_type, quantity_change, quantity_before, quantity_after,
+       (branch_id, product_id, variant_id, transaction_type, quantity_change, quantity_before, quantity_after,
         reference_table, reference_id, note, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [productId, resolvedVariantId, transactionType, delta, before, after, referenceTable || null, referenceId || null, note || null, createdBy]
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [branchId, productId, resolvedVariantId, transactionType, delta, before, after, referenceTable || null, referenceId || null, note || null, createdBy]
   );
 
-  return { productId, variantId: resolvedVariantId, before, after, change: delta };
+  return { branchId, productId, variantId: resolvedVariantId, before, after, change: delta };
 }
 
 /**
  * Current net stock effect already recorded in the ledger for a given
  * reference (e.g. all purchase/cancellation_reversal rows of one
- * purchase for one product).
+ * purchase for one product), scoped to one branch.
  */
-async function getNetEffect({ conn, productId, variantId = 0, referenceTable, referenceId }) {
+async function getNetEffect({ conn, branchId, productId, variantId = 0, referenceTable, referenceId }) {
   const resolvedVariantId = Number(variantId ?? 0);
   const [[row]] = await conn.query(
     `SELECT COALESCE(SUM(quantity_change), 0) AS net
      FROM stock_transactions
-     WHERE product_id = ?
+     WHERE branch_id = ?
+       AND product_id = ?
        AND variant_id = ?
        AND reference_table = ?
        AND reference_id = ?`,
-    [productId, resolvedVariantId, referenceTable, referenceId]
+    [branchId, productId, resolvedVariantId, referenceTable, referenceId]
   );
   return Number(row.net);
 }
 
 /**
- * Reconcile a purchase's stock effect to match its status.
+ * Reconcile a purchase's stock effect (in the purchase's own branch) to
+ * match its status.
  *
  *   targetStatus 'completed' -> desired net effect = +item.quantity
  *   targetStatus 'cancelled' -> desired net effect = 0
@@ -144,15 +154,21 @@ async function getNetEffect({ conn, productId, variantId = 0, referenceTable, re
  */
 async function syncPurchaseStock({
   conn,
+  branchId,
   purchaseId,
   items,
   targetStatus,
   createdBy,
 }) {
+  if (!branchId) {
+    throw ApiError.badRequest('branchId is required to reconcile purchase stock');
+  }
+
   for (const item of items) {
     const quantity = Number(item.quantity);
     const net = await getNetEffect({
       conn,
+      branchId,
       productId: item.productId,
       variantId: item.variantId ?? 0,
       referenceTable: 'purchases',
@@ -168,6 +184,7 @@ async function syncPurchaseStock({
 
     await applyChange({
       conn,
+      branchId,
       productId: item.productId,
       variantId: item.variantId ?? 0,
       change,
@@ -181,7 +198,7 @@ async function syncPurchaseStock({
 }
 
 /**
- * Read-side queries (own pool, SELECT-only).
+ * Read-side queries (own pool, SELECT-only). All branch-scoped.
  */
 
 const STOCK_SELECT = `
@@ -199,12 +216,16 @@ const STOCK_SELECT = `
       ELSE 'inactive'
     END AS status
   FROM products p
-  LEFT JOIN stock s ON s.product_id = p.id
+  LEFT JOIN stock s ON s.product_id = p.id AND s.branch_id = ?
 `;
 
-async function findAll({ search, productStatus, limit, offset }) {
+async function findAll({ branchId, search, productStatus, limit, offset }) {
+  if (!branchId) {
+    throw ApiError.badRequest('branchId is required to list stock');
+  }
+
   const where = [];
-  const params = [];
+  const params = [branchId];
 
   if (search) {
     where.push(`(
@@ -239,23 +260,28 @@ async function findAll({ search, productStatus, limit, offset }) {
     `SELECT COUNT(*) AS total
      FROM products p
      ${whereSql}`,
-    params
+    where.length ? params.slice(1) : []
   );
 
   return { rows, total: Number(total) };
 }
 
-async function findByProductId(productId) {
+async function findByProductId(branchId, productId) {
+  if (!branchId) {
+    throw ApiError.badRequest('branchId is required to read stock');
+  }
+
   const [rows] = await pool.query(
     `${STOCK_SELECT}
      WHERE p.id = ?`,
-    [productId]
+    [branchId, productId]
   );
 
   return rows[0] || null;
 }
 
 async function findTransactions({
+  branchId,
   productId,
   type,
   fromDate,
@@ -263,8 +289,12 @@ async function findTransactions({
   limit,
   offset,
 }) {
-  const where = ['st.product_id = ?'];
-  const params = [productId];
+  if (!branchId) {
+    throw ApiError.badRequest('branchId is required to list stock transactions');
+  }
+
+  const where = ['st.branch_id = ?', 'st.product_id = ?'];
+  const params = [branchId, productId];
 
   if (type) {
     where.push('st.transaction_type = ?');
@@ -286,6 +316,7 @@ async function findTransactions({
   const [rows] = await pool.query(
     `SELECT
        st.id,
+       st.branch_id,
        st.product_id,
        p.name AS product_name,
        st.transaction_type,

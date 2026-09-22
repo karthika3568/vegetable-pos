@@ -14,6 +14,7 @@ const list = asyncHandler(async (req, res) => {
   } = req.query;
 
   const result = await purchaseService.list({
+    branchId: req.branchId,
     search,
     supplierId: supplierId ? Number(supplierId) : undefined,
     fromDate,
@@ -36,6 +37,7 @@ const getById = asyncHandler(async (req, res) => {
 
 const create = asyncHandler(async (req, res) => {
   const purchase = await purchaseService.create({
+    branchId: req.branchId,
     supplierId: Number(req.body.supplierId),
     invoiceNumber: req.body.invoiceNumber,
     purchaseDate: req.body.purchaseDate,
@@ -118,6 +120,7 @@ const history = asyncHandler(async (req, res) => {
   } = req.query;
 
   const result = await purchaseService.listHistory({
+    branchId: req.branchId,
     search,
     type,
     status,

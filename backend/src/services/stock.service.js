@@ -28,10 +28,11 @@ function toDateString(value) {
   return date.toISOString().slice(0, 10);
 }
 
-async function list({ search, productStatus, page = 1, limit = 20 }) {
+async function list({ branchId, search, productStatus, page = 1, limit = 20 }) {
   const offset = (page - 1) * limit;
 
   const { rows, total } = await stockRepository.findAll({
+    branchId,
     search,
     productStatus,
     limit,
@@ -49,8 +50,8 @@ async function list({ search, productStatus, page = 1, limit = 20 }) {
   };
 }
 
-async function getByProductId(productId) {
-  const stock = await stockRepository.findByProductId(productId);
+async function getByProductId(branchId, productId) {
+  const stock = await stockRepository.findByProductId(branchId, productId);
 
   if (!stock) {
     throw ApiError.notFound(`Product ${productId} not found`);
@@ -73,7 +74,11 @@ async function ensureProductForAdjustment(productId) {
   return product;
 }
 
-async function adjustProduct({ productId, delta, note, createdBy }) {
+async function adjustProduct({ branchId, productId, delta, note, createdBy }) {
+  if (!branchId) {
+    throw ApiError.badRequest('branchId is required to adjust stock');
+  }
+
   const change = Number(delta);
 
   if (!Number.isFinite(change) || change === 0) {
@@ -89,6 +94,7 @@ async function adjustProduct({ productId, delta, note, createdBy }) {
 
     const result = await stockRepository.applyChange({
       conn: connection,
+      branchId,
       productId,
       change,
       transactionType: 'adjustment',
@@ -100,7 +106,7 @@ async function adjustProduct({ productId, delta, note, createdBy }) {
 
     await connection.commit();
 
-    const updated = await stockRepository.findByProductId(productId);
+    const updated = await stockRepository.findByProductId(branchId, productId);
 
     return { ...updated, movement: result };
   } catch (error) {
@@ -126,7 +132,11 @@ async function adjustProduct({ productId, delta, note, createdBy }) {
  * impact. The ledger row itself stays quantity-only (matching the
  * existing stock_transactions schema).
  */
-async function recordDamage({ productId, quantity, reason, note, createdBy }) {
+async function recordDamage({ branchId, productId, quantity, reason, note, createdBy }) {
+  if (!branchId) {
+    throw ApiError.badRequest('branchId is required to record damage');
+  }
+
   const qty = Number(quantity);
 
   if (!Number.isFinite(qty) || qty <= 0) {
@@ -162,6 +172,7 @@ async function recordDamage({ productId, quantity, reason, note, createdBy }) {
 
     const result = await stockRepository.applyChange({
       conn: connection,
+      branchId,
       productId,
       change: -qty,
       transactionType: 'damage',
@@ -173,7 +184,7 @@ async function recordDamage({ productId, quantity, reason, note, createdBy }) {
 
     await connection.commit();
 
-    const updated = await stockRepository.findByProductId(productId);
+    const updated = await stockRepository.findByProductId(branchId, productId);
 
     return {
       ...updated,
@@ -191,6 +202,7 @@ async function recordDamage({ productId, quantity, reason, note, createdBy }) {
 }
 
 async function listTransactions({
+  branchId,
   productId,
   type,
   fromDate,
@@ -198,11 +210,12 @@ async function listTransactions({
   page = 1,
   limit = 20,
 }) {
-  await getByProductId(productId);
+  await getByProductId(branchId, productId);
 
   const offset = (page - 1) * limit;
 
   const { rows, total } = await stockRepository.findTransactions({
+    branchId,
     productId,
     type,
     fromDate: fromDate ? toDateString(fromDate) : undefined,

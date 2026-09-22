@@ -96,7 +96,7 @@ function sortTopCustomers(rows) {
     });
 }
 
-async function dashboard(query) {
+async function dashboard(query, branchId) {
   const topLimit = Math.min(Math.max(Number(query.top) || 5, 1), 20);
 
   const { fromDate, toDate, toDateExclusive } = profitService.resolveWindow({
@@ -104,9 +104,14 @@ async function dashboard(query) {
     toDate: query.toDate,
   });
 
+  // profitService is not branch-scoped (best-effort pass): the dashboard's
+  // profit section stays shop-wide even when a branch is selected, so it
+  // no longer agrees exactly with a branch-filtered view - documented
+  // limitation, not silently wrong (see report handed back with this work).
   const profit = await profitService.list({ fromDate, toDate });
 
   const raw = await dashboardRepository.getDashboard({
+    branchId,
     fromDate,
     toDate,
     toDateExclusive,

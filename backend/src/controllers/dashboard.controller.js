@@ -3,7 +3,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const response = require('../utils/ApiResponse');
 
 const getDashboard = asyncHandler(async (req, res) => {
-  const payload = await dashboardService.dashboard(req.query);
+  const payload = await dashboardService.dashboard(req.query, req.branchId);
   response.ok(res, payload);
 });
 

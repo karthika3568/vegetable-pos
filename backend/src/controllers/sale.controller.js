@@ -15,6 +15,7 @@ const list = asyncHandler(async (req, res) => {
   } = req.query;
 
   const result = await saleService.list({
+    branchId: req.branchId,
     search,
     customerId: customerId ? Number(customerId) : undefined,
     fromDate,
@@ -40,6 +41,7 @@ const create = asyncHandler(async (req, res) => {
   const permissions = Array.isArray(req.user.permissions) ? req.user.permissions : [];
 
   const sale = await saleService.create({
+    branchId: req.branchId,
     customerId: req.body.customerId
       ? Number(req.body.customerId)
       : undefined,

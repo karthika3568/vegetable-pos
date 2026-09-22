@@ -23,6 +23,7 @@ const listProducts = asyncHandler(async (req, res) => {
     search,
     status: 'active',
     categoryId: categoryId ? Number(categoryId) : undefined,
+    branchId: req.branchId,
     page: page ? Number(page) : 1,
     limit: limit ? Number(limit) : 50,
   });
