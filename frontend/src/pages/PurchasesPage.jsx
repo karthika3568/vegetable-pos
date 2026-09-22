@@ -7,6 +7,7 @@ import PurchaseOrderDetailModal, { PurchaseOrderStatusBadge } from '../component
 import ActualPurchaseAmountModal from '../components/ActualPurchaseAmountModal.jsx';
 import SupplierPaymentModal from '../components/SupplierPaymentModal.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useBranch } from '../context/BranchContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import PageLoader from '../components/PageLoader.jsx';
 import ErrorState from '../components/ErrorState.jsx';
@@ -62,6 +63,7 @@ function purchaseFinance(purchase) {
 
 export default function PurchasesPage() {
   const { hasPermission } = useAuth();
+  const { selectedBranchId } = useBranch();
   const { showToast } = useToast();
   const [tab, setTab] = useState('purchase-orders');
   const [refreshKey, setRefreshKey] = useState(0);
@@ -84,7 +86,7 @@ export default function PurchasesPage() {
         page: poPage,
         limit: LIMIT,
       }),
-    [poSearch, poStatus, poFromDate, poToDate, poPage, refreshKey]
+    [poSearch, poStatus, poFromDate, poToDate, poPage, refreshKey, selectedBranchId]
   );
 
   // --- Purchase History tab
@@ -107,7 +109,7 @@ export default function PurchasesPage() {
         page,
         limit: LIMIT,
       }),
-    [search, historyType, status, fromDate, toDate, page, refreshKey]
+    [search, historyType, status, fromDate, toDate, page, refreshKey, selectedBranchId]
   );
 
   // --- Details

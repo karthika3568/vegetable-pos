@@ -2,6 +2,7 @@ import ActionButton from '../components/ActionButton.jsx';
 import { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAsync } from '../hooks/useAsync.js';
+import { useBranch } from '../context/BranchContext.jsx';
 import { salesService } from '../services/sales.service.js';
 import { useLanguage } from '../i18n/index.jsx';
 import PageLoader from '../components/PageLoader.jsx';
@@ -40,6 +41,7 @@ function SaleTypeBadge({ type, t }) {
 
 export default function SalesPage() {
   const { t } = useLanguage();
+  const { selectedBranchId } = useBranch();
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
@@ -61,7 +63,7 @@ export default function SalesPage() {
         page,
         limit: LIMIT,
       }),
-    [search, status, paymentType, fromDate, toDate, page]
+    [search, status, paymentType, fromDate, toDate, page, selectedBranchId]
   );
 
   const saleDetail = useAsync(

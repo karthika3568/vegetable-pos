@@ -10,7 +10,14 @@
  */
 
 const { pool } = require('../config/db');
+const branchRepository = require('./branch.repository');
 
+// Admin/global product master listing stays branch-agnostic (per the
+// multi-branch design: products are never duplicated per branch), so
+// current_stock here is the TOTAL on-hand quantity summed across every
+// branch. A plain LEFT JOIN stock would multiply rows now that `stock`
+// has one row PER BRANCH per product - this subquery keeps one row per
+// product regardless of how many branches carry it.
 const BASE_SELECT = `
   SELECT
     p.id,
@@ -33,7 +40,7 @@ const BASE_SELECT = `
     tc.igst_rate,
     p.mrp,
     p.price_includes_tax,
-    COALESCE(s.quantity, 0) AS current_stock,
+    COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0) AS current_stock,
     p.reorder_level AS minimum_stock,
     CASE
       WHEN p.is_active = 1 THEN 'active'
@@ -43,7 +50,6 @@ const BASE_SELECT = `
     p.updated_at
   FROM products p
   JOIN categories c ON c.id = p.category_id
-  LEFT JOIN stock s ON s.product_id = p.id
   LEFT JOIN tax_codes tc ON tc.id = p.tax_code_id
 `;
 
@@ -100,12 +106,20 @@ async function create({
     );
 
     if (Number(currentStock) > 0) {
-      await connection.query(
-        `INSERT INTO stock (product_id, quantity)
-         VALUES (?, ?)
-         ON DUPLICATE KEY UPDATE quantity = VALUES(quantity)`,
-        [productId, currentStock]
-      );
+      // The admin Products page has no branch context (product master is
+      // branch-agnostic). An initial-stock convenience figure lands on the
+      // shop's main branch - the same target the 021 migration backfilled
+      // pre-existing stock to - never invented, never split across
+      // branches the admin never chose.
+      const mainBranch = await branchRepository.findMainBranch();
+      if (mainBranch) {
+        await connection.query(
+          `INSERT INTO stock (branch_id, product_id, variant_id, quantity)
+           VALUES (?, ?, 0, ?)
+           ON DUPLICATE KEY UPDATE quantity = VALUES(quantity)`,
+          [mainBranch.id, productId, currentStock]
+        );
+      }
     }
 
     await connection.commit();
@@ -257,12 +271,15 @@ async function update(
       );
     }
 
-    await connection.query(
-      `INSERT INTO stock (product_id, quantity)
-       VALUES (?, ?)
-       ON DUPLICATE KEY UPDATE quantity = VALUES(quantity)`,
-      [id, currentStock]
-    );
+    const mainBranch = await branchRepository.findMainBranch();
+    if (mainBranch) {
+      await connection.query(
+        `INSERT INTO stock (branch_id, product_id, variant_id, quantity)
+         VALUES (?, ?, 0, ?)
+         ON DUPLICATE KEY UPDATE quantity = VALUES(quantity)`,
+        [mainBranch.id, id, currentStock]
+      );
+    }
 
     await connection.commit();
 
@@ -328,11 +345,63 @@ async function list({
   status,
   categoryId,
   lowStockOnly = false,
+  branchId = null,
   limit,
   offset,
 }) {
   const where = [];
+  // Params that precede the WHERE clause (the branch-scoped stock
+  // subquery lives in the SELECT list) must be collected separately so
+  // the final param array matches positional order.
+  const selectParams = [];
   const params = [];
+
+  // Branch-scoped listing (POS / branch-aware callers): only products
+  // with an active branch_products row for this branch, and
+  // current_stock reflects THIS branch only - never the global total.
+  // Unscoped (branchId null): the existing branch-agnostic admin
+  // Products-page behaviour, current_stock summed across all branches.
+  const stockExpr = branchId
+    ? `COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id AND s.branch_id = ?), 0)`
+    : `COALESCE((SELECT SUM(s.quantity) FROM stock s WHERE s.product_id = p.id), 0)`;
+  if (branchId) selectParams.push(branchId);
+
+  const selectSql = `
+    SELECT
+      p.id,
+      p.sku AS product_code,
+      p.barcode,
+      p.name,
+      p.category_id,
+      c.name AS category_name,
+      p.unit,
+      p.cost_price AS purchase_price,
+      p.selling_price,
+      p.wholesale_price,
+      p.image_path,
+      p.hsn_code,
+      p.tax_code_id,
+      tc.code AS tax_code,
+      tc.name AS tax_code_name,
+      tc.cgst_rate,
+      tc.sgst_rate,
+      tc.igst_rate,
+      p.mrp,
+      p.price_includes_tax,
+      ${stockExpr} AS current_stock,
+      p.reorder_level AS minimum_stock,
+      CASE
+        WHEN p.is_active = 1 THEN 'active'
+        ELSE 'inactive'
+      END AS status,
+      p.created_at,
+      p.updated_at
+    FROM products p
+    JOIN categories c ON c.id = p.category_id
+    LEFT JOIN tax_codes tc ON tc.id = p.tax_code_id
+    ${branchId ? 'JOIN branch_products bp ON bp.product_id = p.id AND bp.branch_id = ? AND bp.is_active = 1' : ''}
+  `;
+  if (branchId) selectParams.push(branchId);
 
   if (search) {
     where.push(`
@@ -362,7 +431,8 @@ async function list({
   }
 
   if (lowStockOnly) {
-    where.push(`COALESCE(s.quantity, 0) <= p.reorder_level`);
+    where.push(`${stockExpr} <= p.reorder_level`);
+    if (branchId) params.push(branchId);
   }
 
   const whereSql = where.length
@@ -370,20 +440,22 @@ async function list({
     : '';
 
   const [rows] = await pool.query(
-    `${BASE_SELECT}
+    `${selectSql}
      ${whereSql}
      ORDER BY p.name ASC
      LIMIT ? OFFSET ?`,
-    [...params, limit, offset]
+    [...selectParams, ...params, limit, offset]
   );
+
+  const countSelectParams = branchId ? [branchId] : [];
 
   const [countRows] = await pool.query(
     `SELECT COUNT(*) AS total
      FROM products p
      JOIN categories c ON c.id = p.category_id
-     LEFT JOIN stock s ON s.product_id = p.id
+     ${branchId ? 'JOIN branch_products bp ON bp.product_id = p.id AND bp.branch_id = ? AND bp.is_active = 1' : ''}
      ${whereSql}`,
-    params
+    [...countSelectParams, ...params]
   );
 
   return {

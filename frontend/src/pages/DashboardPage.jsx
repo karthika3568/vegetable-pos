@@ -22,6 +22,7 @@ import {
   FiDollarSign,
 } from 'react-icons/fi';
 import { useAsync } from '../hooks/useAsync.js';
+import { useBranch } from '../context/BranchContext.jsx';
 import { dashboardService } from '../services/dashboard.service.js';
 import { revenueService } from '../services/revenue.service.js';
 import { customerService } from '../services/customer.service.js';
@@ -484,6 +485,7 @@ const TREND_MODES = [
 ];
 
 export default function DashboardPage() {
+  const { selectedBranchId } = useBranch();
   const [preset, setPreset] = useState('today');
   const [customFrom, setCustomFrom] = useState(todayString());
   const [customTo, setCustomTo] = useState(todayString());
@@ -496,12 +498,12 @@ export default function DashboardPage() {
   const { data, loading, error, refetch } = useAsync(async () => {
     const summary = await dashboardService.getSummary({ fromDate: period.fromDate, toDate: period.toDate, top: 5 });
     return summary ?? {};
-  }, [period.fromDate, period.toDate]);
+  }, [period.fromDate, period.toDate, selectedBranchId]);
 
   const revenue = useAsync(async () => {
     const payload = await revenueService.getDashboard({ fromDate: period.fromDate, toDate: period.toDate, top: 5 });
     return payload ?? {};
-  }, [period.fromDate, period.toDate]);
+  }, [period.fromDate, period.toDate, selectedBranchId]);
 
   const customers = useAsync(async () => {
     const payload = await customerService.list({ page: 1, limit: 1 });

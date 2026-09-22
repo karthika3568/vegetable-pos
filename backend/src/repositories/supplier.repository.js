@@ -47,6 +47,15 @@ const BASE_COLUMNS = `
     LEFT JOIN purchases pu ON pu.id = p.purchase_id
     WHERE (p.supplier_id = suppliers.id OR (pu.supplier_id = suppliers.id AND pu.status = 'completed'))
       AND p.reversed_payment_id IS NULL
+  ), 0) -
+  COALESCE((
+    -- Purchase returns reduce what the shop owes this supplier. Reuses
+    -- the same derived-balance architecture as purchases/payments above
+    -- (never a payments row - the shop never "pays" for a return).
+    SELECT SUM(pr.adjustment_amount)
+    FROM purchase_returns pr
+    JOIN purchases pu ON pu.id = pr.purchase_id
+    WHERE pu.supplier_id = suppliers.id AND pu.status = 'completed'
   ), 0) AS current_payable_balance,
   suppliers.status,
   suppliers.created_at,
@@ -221,6 +230,12 @@ async function recordPayment({ supplierId, amount, method, paymentDate, notes, r
           LEFT JOIN purchases pu ON pu.id = p.purchase_id
           WHERE (p.supplier_id = s.id OR (pu.supplier_id = s.id AND pu.status = 'completed'))
             AND p.reversed_payment_id IS NULL
+        ), 0) -
+        COALESCE((
+          SELECT SUM(pr.adjustment_amount)
+          FROM purchase_returns pr
+          JOIN purchases pu ON pu.id = pr.purchase_id
+          WHERE pu.supplier_id = s.id AND pu.status = 'completed'
         ), 0) AS current_payable
       FROM suppliers s
       WHERE s.id = ?

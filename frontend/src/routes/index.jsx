@@ -21,6 +21,7 @@ import CategoriesPage from '../pages/CategoriesPage.jsx';
 import VariantsPage from '../pages/VariantsPage.jsx';
 import CustomersPage from '../pages/CustomersPage.jsx';
 import SuppliersPage from '../pages/SuppliersPage.jsx';
+import BranchesPage from '../pages/BranchesPage.jsx';
 import SettingsPage from '../pages/SettingsPage.jsx';
 import TaxCodesPage from '../pages/TaxCodesPage.jsx';
 import UsersPage from '../pages/UsersPage.jsx';
@@ -199,6 +200,15 @@ export default function AppRoutes() {
           element={
             <RequirePermission permission="suppliers.manage">
               <SuppliersPage />
+            </RequirePermission>
+          }
+        />
+
+        <Route
+          path="branches"
+          element={
+            <RequirePermission permission="settings.manage">
+              <BranchesPage />
             </RequirePermission>
           }
         />

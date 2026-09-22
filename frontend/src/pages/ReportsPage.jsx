@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAsync } from '../hooks/useAsync.js';
+import { useBranch } from '../context/BranchContext.jsx';
 import { reportsService } from '../services/reports.service.js';
 import PageLoader from '../components/PageLoader.jsx';
 import ErrorState from '../components/ErrorState.jsx';
@@ -423,6 +424,7 @@ function ProfitSummary({ data = {} }) {
 }
 
 export default function ReportsPage() {
+  const { selectedBranchId } = useBranch();
   const [active, setActive] = useState(REPORTS[0].key);
 
   const [searchInput, setSearchInput] = useState('');
@@ -464,7 +466,7 @@ export default function ReportsPage() {
             page,
             limit: LIMIT,
           }),
-    [active, search, fromDate, toDate, status, paymentType, category, sortBy, sortOrder, page]
+    [active, search, fromDate, toDate, status, paymentType, category, sortBy, sortOrder, page, selectedBranchId]
   );
 
   function selectReport(key) {

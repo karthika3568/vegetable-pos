@@ -45,6 +45,7 @@ function buildPoNumber(id) {
 const BASE_SELECT = `
   SELECT
     po.id,
+    po.branch_id,
     po.po_number,
     po.supplier_id,
     s.name AS supplier_name,
@@ -170,6 +171,7 @@ FROM purchases pu
 }
 
 async function findAll({
+  branchId,
   search,
   supplierId,
   fromDate,
@@ -180,6 +182,11 @@ async function findAll({
 }) {
   const where = [];
   const params = [];
+
+  if (branchId) {
+    where.push('po.branch_id = ?');
+    params.push(branchId);
+  }
 
   if (search) {
     where.push(`(
@@ -234,6 +241,7 @@ async function findAll({
 }
 
 async function create({
+  branchId,
   supplierId,
   orderDate,
   expectedDeliveryDate,
@@ -241,6 +249,10 @@ async function create({
   items,
   createdBy,
 }) {
+  if (!branchId) {
+    throw ApiError.badRequest('branchId is required to create a purchase order');
+  }
+
   const connection = await pool.getConnection();
 
   try {
@@ -250,9 +262,9 @@ async function create({
 
     const [result] = await connection.query(
       `INSERT INTO purchase_orders
-        (po_number, supplier_id, order_date, expected_delivery_date, notes, status, created_by)
-       VALUES (?, ?, ?, ?, ?, 'draft', ?)`,
-      [tempPoNumber, supplierId, orderDate, expectedDeliveryDate || null, notes || null, createdBy]
+        (branch_id, po_number, supplier_id, order_date, expected_delivery_date, notes, status, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, 'draft', ?)`,
+      [branchId, tempPoNumber, supplierId, orderDate, expectedDeliveryDate || null, notes || null, createdBy]
     );
 
     const poId = result.insertId;
@@ -422,7 +434,7 @@ async function receive(poId, { receiptDate, lines, createdBy }) {
     await connection.beginTransaction();
 
     const [[po]] = await connection.query(
-      `SELECT id, po_number, supplier_id, status FROM purchase_orders WHERE id = ? FOR UPDATE`,
+      `SELECT id, branch_id, po_number, supplier_id, status FROM purchase_orders WHERE id = ? FOR UPDATE`,
       [poId]
     );
 
@@ -547,9 +559,10 @@ async function receive(poId, { receiptDate, lines, createdBy }) {
 
     const [purchaseResult] = await connection.query(
       `INSERT INTO purchases
-        (supplier_id, purchase_order_id, invoice_number, purchase_date, total_amount, paid_amount, payment_status, status, notes, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, 'unpaid', 'completed', ?, ?)`,
+        (branch_id, supplier_id, purchase_order_id, invoice_number, purchase_date, total_amount, paid_amount, payment_status, status, notes, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'unpaid', 'completed', ?, ?)`,
       [
+        po.branch_id,
         po.supplier_id,
         poId,
         receiptNumber,
@@ -573,6 +586,7 @@ async function receive(poId, { receiptDate, lines, createdBy }) {
 
     await stockRepository.syncPurchaseStock({
       conn: connection,
+      branchId: Number(po.branch_id),
       purchaseId,
       items: stockItems,
       targetStatus: 'completed',

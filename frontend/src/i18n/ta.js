@@ -59,6 +59,7 @@ export default {
     reports: 'அறிக்கைகள்',
     analytics: 'பொருள் பகுப்பாய்வு',
     system: 'அமைப்பு',
+    branches: 'கிளைகள்',
     settings: 'அமைப்புகள்',
     taxCodes: 'வரி குறியீடுகள்',
     auditLog: 'தணிக்கை பதிவு',

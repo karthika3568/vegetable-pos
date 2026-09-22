@@ -59,6 +59,7 @@ export default {
     reports: 'Reports',
     analytics: 'Product Analytics',
     system: 'System',
+    branches: 'Branches',
     settings: 'Settings',
     users: 'Users',
     taxCodes: 'Tax Codes',

@@ -71,6 +71,7 @@ function toMoney(value) {
 const BASE_SELECT = `
   SELECT
     s.id,
+    s.branch_id,
     s.customer_id,
     c.name AS customer_name,
     c.phone AS customer_phone,
@@ -105,6 +106,7 @@ const BASE_SELECT = `
  * status, paymentType.
  */
 async function findAll({
+  branchId,
   search,
   customerId,
   fromDate,
@@ -116,6 +118,11 @@ async function findAll({
 }) {
   const where = [];
   const params = [];
+
+  if (branchId) {
+    where.push('s.branch_id = ?');
+    params.push(branchId);
+  }
 
   if (search) {
     where.push(`(
@@ -297,6 +304,7 @@ async function findById(id) {
  *  8. COMMITs - anything before that rolls back entirely
  */
 async function create({
+  branchId,
   customerId,
   saleDate,
   saleType,
@@ -315,6 +323,10 @@ async function create({
   creditRequested,
   createdBy,
 }) {
+  if (!branchId) {
+    throw ApiError.badRequest('branchId is required to create a sale');
+  }
+
   const connection = await pool.getConnection();
 
   try {
@@ -377,11 +389,12 @@ async function create({
     // set the real number inside the same transaction.
 const [saleResult] = await connection.query(
       `INSERT INTO sales
-         (customer_id, invoice_number, sale_date, subtotal, discount_amount,
+         (branch_id, customer_id, invoice_number, sale_date, subtotal, discount_amount,
           tax_amount, cgst_amount, sgst_amount, igst_amount,
           total_amount, paid_amount, payment_type, sale_type, status, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?)`,
       [
+        branchId,
         customerId || null,
         `TMP-${randomUUID()}`,
         saleDate,
@@ -492,6 +505,7 @@ const [saleResult] = await connection.query(
     for (const item of items) {
       await stockRepository.applyChange({
         conn: connection,
+        branchId,
         productId: item.productId,
         variantId: item.variantId ?? 0,
         change: -item.quantity,
@@ -593,7 +607,7 @@ async function cancel({ saleId, createdBy }) {
     await connection.beginTransaction();
 
     const [saleRows] = await connection.query(
-      `SELECT id, customer_id, invoice_number, status
+      `SELECT id, branch_id, customer_id, invoice_number, status
        FROM sales
        WHERE id = ?
        FOR UPDATE`,
@@ -631,6 +645,7 @@ async function cancel({ saleId, createdBy }) {
       if (remaining > 0) {
         await stockRepository.applyChange({
           conn: connection,
+          branchId: Number(sale.branch_id),
           productId: Number(item.product_id),
           change: remaining,
           transactionType: 'cancellation_reversal',
@@ -687,7 +702,7 @@ async function returnGoods({ saleId, items, reason, createdBy }) {
     await connection.beginTransaction();
 
     const [saleRows] = await connection.query(
-      `SELECT id, customer_id, invoice_number, status
+      `SELECT id, branch_id, customer_id, invoice_number, status
        FROM sales
        WHERE id = ?
        FOR UPDATE`,
@@ -767,6 +782,7 @@ async function returnGoods({ saleId, items, reason, createdBy }) {
 
       await stockRepository.applyChange({
         conn: connection,
+        branchId: Number(sale.branch_id),
         productId: item.productId,
         change: item.quantity,
         transactionType: 'return_sale',

@@ -14,6 +14,7 @@ const list = asyncHandler(async (req, res) => {
   } = req.query;
 
   const result = await purchaseOrderService.list({
+    branchId: req.branchId,
     search,
     supplierId: supplierId ? Number(supplierId) : undefined,
     fromDate,
@@ -36,6 +37,7 @@ const getById = asyncHandler(async (req, res) => {
 
 const create = asyncHandler(async (req, res) => {
   const purchaseOrder = await purchaseOrderService.create({
+    branchId: req.branchId,
     supplierId: Number(req.body.supplierId),
     orderDate: req.body.orderDate,
     expectedDeliveryDate: req.body.expectedDeliveryDate || null,

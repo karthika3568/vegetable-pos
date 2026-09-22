@@ -35,6 +35,7 @@ const {
 const BASE_SELECT = `
   SELECT
     pu.id,
+    pu.branch_id,
     pu.supplier_id,
     s.name AS supplier_name,
     pu.purchase_order_id,
@@ -85,6 +86,7 @@ function money(value) {
  *   - status
  */
 async function findAll({
+  branchId,
   search,
   supplierId,
   fromDate,
@@ -95,6 +97,11 @@ async function findAll({
 }) {
   const where = [];
   const params = [];
+
+  if (branchId) {
+    where.push('pu.branch_id = ?');
+    params.push(branchId);
+  }
 
   if (search) {
     where.push(`(
@@ -497,6 +504,7 @@ async function setActualAmount({ purchaseId, items, damages, damageAdjustmentAcc
  * stock update can never be left behind.
  */
 async function create({
+  branchId,
   supplierId,
   invoiceNumber,
   purchaseDate,
@@ -507,6 +515,10 @@ async function create({
   invoiceImage,
   createdBy,
 }) {
+  if (!branchId) {
+    throw ApiError.badRequest('branchId is required to record a purchase');
+  }
+
   const connection = await pool.getConnection();
   let diskFilePath = null;
 
@@ -515,9 +527,10 @@ async function create({
 
     const [result] = await connection.query(
       `INSERT INTO purchases
-        (supplier_id, invoice_number, purchase_date, total_amount, paid_amount, payment_status, notes, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        (branch_id, supplier_id, invoice_number, purchase_date, total_amount, paid_amount, payment_status, notes, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
+        branchId,
         supplierId,
         invoiceNumber,
         purchaseDate,
@@ -550,6 +563,7 @@ async function create({
 
     await stockRepository.syncPurchaseStock({
       conn: connection,
+      branchId,
       purchaseId,
       items,
       targetStatus: 'completed',
@@ -612,7 +626,7 @@ async function setStatus(id, status, { items, createdBy }) {
     await connection.beginTransaction();
 
     const [[row]] = await connection.query(
-      `SELECT status FROM purchases WHERE id = ? FOR UPDATE`,
+      `SELECT status, branch_id FROM purchases WHERE id = ? FOR UPDATE`,
       [id]
     );
 
@@ -625,6 +639,7 @@ async function setStatus(id, status, { items, createdBy }) {
     if (row.status !== status) {
       await stockRepository.syncPurchaseStock({
         conn: connection,
+        branchId: Number(row.branch_id),
         purchaseId: id,
         items,
         targetStatus: status,
@@ -669,6 +684,7 @@ const HISTORY_PURCHASE_SELECT = `
   SELECT
     'purchase' AS source_type,
     pu.id,
+    pu.branch_id,
     pu.invoice_number AS reference_no,
     po.po_number,
     NULL AS product_name,
@@ -693,6 +709,7 @@ const HISTORY_PURCHASE_SELECT = `
 `;
 
 async function findHistory({
+  branchId,
   search,
   type,
   status,
@@ -704,6 +721,11 @@ async function findHistory({
   const inner = `(${HISTORY_PURCHASE_SELECT}) unified`;
   const where = [];
   const params = [];
+
+  if (branchId) {
+    where.push('unified.branch_id = ?');
+    params.push(branchId);
+  }
 
   if (search) {
     where.push(`(

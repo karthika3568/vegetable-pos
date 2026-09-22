@@ -11,6 +11,7 @@ const list = asyncHandler(async (req, res) => {
   } = req.query;
 
   const result = await stockService.list({
+    branchId: req.branchId,
     search,
     productStatus,
     page: page ? Number(page) : undefined,
@@ -22,6 +23,7 @@ const list = asyncHandler(async (req, res) => {
 
 const getByProduct = asyncHandler(async (req, res) => {
   const stock = await stockService.getByProductId(
+    req.branchId,
     Number(req.params.productId)
   );
 
@@ -30,6 +32,7 @@ const getByProduct = asyncHandler(async (req, res) => {
 
 const adjust = asyncHandler(async (req, res) => {
   const stock = await stockService.adjustProduct({
+    branchId: req.branchId,
     productId: Number(req.params.productId),
     delta: Number(req.body.delta),
     note: req.body.note,
@@ -41,6 +44,7 @@ const adjust = asyncHandler(async (req, res) => {
 
 const damage = asyncHandler(async (req, res) => {
   const stock = await stockService.recordDamage({
+    branchId: req.branchId,
     productId: Number(req.params.productId),
     quantity: Number(req.body.quantity),
     reason: req.body.reason,
@@ -61,6 +65,7 @@ const transactions = asyncHandler(async (req, res) => {
   } = req.query;
 
   const result = await stockService.listTransactions({
+    branchId: req.branchId,
     productId: Number(req.params.productId),
     type,
     fromDate,

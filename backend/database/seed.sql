@@ -5,6 +5,9 @@
 -- settings. No fake sales/purchases/customers are created here.
 -- =====================================================================
 
+INSERT INTO branches (name, is_main, status) VALUES
+    ('Main Branch', 1, 'active');
+
 INSERT INTO roles (name, description) VALUES
     ('admin',   'Full system access'),
     ('manager', 'Manage products, stock, purchases, reports'),
@@ -25,6 +28,8 @@ INSERT INTO permissions (code, module, description) VALUES
     ('reports.view',      'reports',   'View dashboard and reports'),
     ('users.manage',      'users',     'Create/edit users and permissions'),
     ('settings.manage',   'settings',  'Change shop settings'),
+    ('branches.manage',   'branches',  'Create/edit branches and branch-product availability'),
+    ('bookings.manage',   'bookings',  'Create/manage customer pre-bookings and convert to sale'),
     ('credit.create',     'credit',    'Create customer credit from a completed sale'),
     ('credit.collect',    'credit',    'Collect outstanding customer credit'),
     ('credit.view',       'credit',    'View customer credit balances and history');

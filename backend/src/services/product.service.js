@@ -140,6 +140,7 @@ async function list({
   status,
   categoryId,
   lowStockOnly,
+  branchId,
   page = 1,
   limit = 20,
 }) {
@@ -150,6 +151,7 @@ async function list({
     status,
     categoryId,
     lowStockOnly,
+    branchId: branchId || null,
     limit,
     offset,
   });

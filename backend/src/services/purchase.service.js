@@ -39,6 +39,7 @@ function toMoney(value) {
 }
 
 async function list({
+  branchId,
   search,
   supplierId,
   fromDate,
@@ -50,6 +51,7 @@ async function list({
   const offset = (page - 1) * limit;
 
   const { rows, total } = await purchaseRepository.findAll({
+    branchId,
     search,
     supplierId,
     fromDate: fromDate ? toDateString(fromDate) : undefined,
@@ -125,7 +127,11 @@ async function ensureProductActive(productId) {
   return product;
 }
 
-async function create({ supplierId, invoiceNumber, purchaseDate, paymentType = 'credit', notes, items, invoiceImageFile, createdBy }) {
+async function create({ branchId, supplierId, invoiceNumber, purchaseDate, paymentType = 'credit', notes, items, invoiceImageFile, createdBy }) {
+  if (!branchId) {
+    throw ApiError.badRequest('branchId is required to record a purchase');
+  }
+
   await ensureSupplierActive(supplierId);
   await ensureInvoiceAvailable(supplierId, invoiceNumber);
 
@@ -173,6 +179,7 @@ async function create({ supplierId, invoiceNumber, purchaseDate, paymentType = '
   }
 
   const purchase = await purchaseRepository.create({
+    branchId,
     supplierId,
     invoiceNumber,
     purchaseDate: purchaseDateStr,
@@ -265,6 +272,7 @@ async function getPayments(purchaseId) {
  * Purchase History (normal purchases).
  */
 async function listHistory({
+  branchId,
   search,
   type,
   status,
@@ -276,6 +284,7 @@ async function listHistory({
   const offset = (page - 1) * limit;
 
   const { rows, total } = await purchaseRepository.findHistory({
+    branchId,
     search,
     type,
     status,

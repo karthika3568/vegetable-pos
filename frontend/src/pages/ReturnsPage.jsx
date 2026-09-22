@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useToast } from '../context/ToastContext.jsx';
 import { useAsync } from '../hooks/useAsync.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useBranch } from '../context/BranchContext.jsx';
 import { returnService, getReturnableByItem, RETURN_STATUS_LABELS } from '../services/return.service.js';
 import PageLoader from '../components/PageLoader.jsx';
 import ErrorState from '../components/ErrorState.jsx';
@@ -404,6 +405,7 @@ function CancelSaleModal({ initialSaleId, onClose, onDone }) {
 
 export default function ReturnsPage() {
   const { hasPermission } = useAuth();
+  const { selectedBranchId } = useBranch();
   const canAct = hasPermission('sales.cancel');
 
   const [searchInput, setSearchInput] = useState('');
@@ -428,7 +430,7 @@ export default function ReturnsPage() {
         page,
         limit: LIMIT,
       }),
-    [search, status, fromDate, toDate, page]
+    [search, status, fromDate, toDate, page, selectedBranchId]
   );
 
   const returnDetail = useAsync(
