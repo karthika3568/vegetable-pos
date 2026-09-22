@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { useToast } from '../context/ToastContext.jsx';
 import { useAsync } from '../hooks/useAsync.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useBranch } from '../context/BranchContext.jsx';
 import { stockService, PRODUCT_STATUS_OPTIONS, TX_TYPE_LABELS, DAMAGE_REASONS } from '../services/stock.service.js';
 import PageLoader from '../components/PageLoader.jsx';
 import ErrorState from '../components/ErrorState.jsx';
@@ -531,6 +532,7 @@ function StockDetailModal({ productId, refreshKey, canAdjust, onAdjust, onDamage
 
 export default function StockPage() {
   const { hasPermission } = useAuth();
+  const { selectedBranchId } = useBranch();
   const canAdjust = hasPermission('stock.adjust');
 
   const [searchInput, setSearchInput] = useState('');
@@ -546,6 +548,8 @@ export default function StockPage() {
   const { showToast } = useToast();
 
   const list = useAsync(
+    // Stock levels are branch-scoped via the X-Branch-Id header; re-fetch on
+    // branch change so switching branches shows that branch's stock.
     () =>
       stockService.list({
         search: search || undefined,
@@ -553,7 +557,7 @@ export default function StockPage() {
         page,
         limit: LIMIT,
       }),
-    [search, productStatus, page]
+    [search, productStatus, page, selectedBranchId]
   );
 
   function showNotice(message) {

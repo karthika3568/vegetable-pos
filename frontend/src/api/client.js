@@ -41,6 +41,24 @@ export function clearAuthToken() {
   authToken = null;
 }
 
+// The currently selected branch, mirrored here (outside React) so the
+// request() function below can attach it as a header. BranchContext is the
+// source of truth and keeps this in sync via setActiveBranchId() whenever
+// the user switches branches or the provider resolves the initial one.
+let activeBranchId = null;
+
+export function setActiveBranchId(branchId) {
+  activeBranchId = branchId || null;
+}
+
+export function getActiveBranchId() {
+  return activeBranchId;
+}
+
+export function clearActiveBranchId() {
+  activeBranchId = null;
+}
+
 function buildUrl(path, params) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   let url = `${getBaseUrl()}${normalizedPath}`;
@@ -78,6 +96,7 @@ async function request(path, { method = 'GET', body, params, signal, multipart =
   const headers = { Accept: 'application/json' };
   if (body !== undefined && !isMultipart) headers['Content-Type'] = 'application/json';
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  if (activeBranchId) headers['X-Branch-Id'] = String(activeBranchId);
 
   let response;
   try {

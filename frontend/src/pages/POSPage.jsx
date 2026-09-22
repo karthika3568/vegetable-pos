@@ -5,6 +5,7 @@ import { posService } from '../services/pos.service.js';
 import { customerService } from '../services/customer.service.js';
 import { salesService, PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from '../services/sales.service.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useBranch } from '../context/BranchContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { useLanguage } from '../i18n/index.jsx';
 import ErrorState from '../components/ErrorState.jsx';
@@ -792,6 +793,7 @@ function NewCustomerModal({ onClose, onSuccess }) {
 export default function POSPage() {
   const { t } = useLanguage();
   const { hasPermission } = useAuth();
+  const { selectedBranchId } = useBranch();
   const { showToast } = useToast();
 
   const [saleType, setSaleType] = useState('retail');
@@ -829,8 +831,11 @@ export default function POSPage() {
   const submittingRef = useRef(false);
 
   const products = useAsync(
+    // products-for-POS is branch-scoped via the X-Branch-Id header; re-fetch
+    // whenever the active branch changes so switching branches reflects
+    // that branch's product availability.
     () => posService.products({ search, limit: 200 }),
-    [search]
+    [search, selectedBranchId]
   );
 
   const posSettings = useAsync(() => posService.settings(), []);

@@ -1,12 +1,14 @@
 import { useEffect } from 'react';
-import { FiLogOut, FiMenu } from 'react-icons/fi';
+import { FiLogOut, FiMapPin, FiMenu } from 'react-icons/fi';
 import { useLocation } from 'react-router-dom';
 import { NAVIGATION } from '../../config/navigation.js';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { useBranch } from '../../context/BranchContext.jsx';
 import { useLanguage } from '../../i18n/index.jsx';
 
 export default function Header({ menuOpen, onMenuToggle, isPos = false, isMobile = false }) {
   const { user, logout } = useAuth();
+  const { branches, selectedBranchId, setSelectedBranchId } = useBranch();
   const { t } = useLanguage();
   const location = useLocation();
 
@@ -59,6 +61,24 @@ export default function Header({ menuOpen, onMenuToggle, isPos = false, isMobile
 
       <div className="header-right">
         <div className="page-title-pill">{pageTitle}</div>
+
+        {branches.length > 0 ? (
+          <label className="branch-select" title="Active branch">
+            <FiMapPin size={14} aria-hidden="true" />
+            <span className="sr-only">Active branch</span>
+            <select
+              value={selectedBranchId ?? ''}
+              onChange={(event) => setSelectedBranchId(event.target.value)}
+              aria-label="Active branch"
+            >
+              {branches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
 
         <div className="user-chip" title={`${user?.fullName || user?.username} · ${user?.roleName || ''}`}>
           <span className="avatar" aria-hidden="true">

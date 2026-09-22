@@ -17,6 +17,7 @@ import {
   FiFolder,
   FiHome,
   FiLayers,
+  FiMapPin,
   FiPackage,
   FiRotateCcw,
   FiSettings,
@@ -94,6 +95,7 @@ export const NAVIGATION = [
     labelKey: 'nav.system',
     // Audit logs are intentionally not a user-facing module.
     items: [
+      { id: 'branches', labelKey: 'nav.branches', path: '/branches', permission: 'settings.manage', icon: FiMapPin },
       { id: 'settings', labelKey: 'nav.settings', path: '/settings', permission: 'settings.manage', icon: FiSettings },
       { id: 'users', labelKey: 'nav.users', path: '/users', permission: 'users.manage', icon: FiUsers },
     ],
