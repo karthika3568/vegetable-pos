@@ -31,6 +31,11 @@ const create = [
     .isInt({ min: 1 })
     .withMessage('each item productId must be a positive integer'),
 
+  body('items.*.variantId')
+    .optional({ nullable: true })
+    .isInt({ min: 1 })
+    .withMessage('each item variantId must be a positive integer when provided'),
+
   body('items.*.quantity')
     .isFloat({ gt: 0 })
     .withMessage('each item quantity must be a positive number'),
@@ -138,6 +143,11 @@ const returnSale = [
   body('items.*.productId')
     .isInt({ min: 1 })
     .withMessage('each item productId must be a positive integer'),
+
+  body('items.*.variantId')
+    .optional({ nullable: true })
+    .isInt({ min: 1 })
+    .withMessage('each item variantId must be a positive integer when provided'),
 
   body('items.*.quantity')
     .isFloat({ gt: 0 })

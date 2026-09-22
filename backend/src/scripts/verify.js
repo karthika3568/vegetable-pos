@@ -92,6 +92,21 @@ async function verifyStructure(dbName) {
     `SHOW COLUMNS FROM payments LIKE 'supplier_id'`
   );
   check('payments.supplier_id column exists', payCols.length > 0);
+
+  const [saleVariantCols] = await pool.query(
+    `SHOW COLUMNS FROM sale_items LIKE 'variant_id'`
+  );
+  check('sale_items.variant_id column exists', saleVariantCols.length > 0);
+
+  const [stockVariantCols] = await pool.query(
+    `SHOW COLUMNS FROM stock LIKE 'variant_id'`
+  );
+  check('stock.variant_id column exists', stockVariantCols.length > 0);
+
+  const [txVariantCols] = await pool.query(
+    `SHOW COLUMNS FROM stock_transactions LIKE 'variant_id'`
+  );
+  check('stock_transactions.variant_id column exists', txVariantCols.length > 0);
 }
 
 async function verifyBusinessFlow() {

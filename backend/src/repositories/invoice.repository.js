@@ -34,6 +34,7 @@ const BASE_SELECT = `
     s.paid_amount,
     s.balance_due,
     s.payment_type,
+    s.sale_type,
     s.status,
     s.created_by,
     u.username AS created_by_name,
@@ -59,8 +60,10 @@ async function findById(id) {
     `SELECT
        si.id,
        si.product_id,
+       si.variant_id,
        p.sku AS product_code,
        p.name AS product_name,
+       COALESCE(pv.variant_name, p.name) AS variant_name,
        p.unit,
        si.quantity,
        si.unit_price,
@@ -68,6 +71,7 @@ async function findById(id) {
        si.line_total
      FROM sale_items si
      JOIN products p ON p.id = si.product_id
+     LEFT JOIN product_variants pv ON pv.id = si.variant_id
      WHERE si.sale_id = ?
      ORDER BY si.id ASC`,
     [id]
@@ -131,6 +135,7 @@ async function findById(id) {
        sri.product_id,
        p.sku AS product_code,
        p.name AS product_name,
+       COALESCE(pv.variant_name, p.name) AS variant_name,
        p.unit,
        sri.quantity,
        sri.unit_price,
@@ -138,6 +143,7 @@ async function findById(id) {
        sri.line_total
      FROM sale_return_items sri
      JOIN products p ON p.id = sri.product_id
+     LEFT JOIN product_variants pv ON pv.id = sri.variant_id
      JOIN sale_returns sr ON sr.id = sri.return_id
      WHERE sr.sale_id = ?
      ORDER BY sri.id ASC`,

@@ -50,6 +50,9 @@ const create = asyncHandler(async (req, res) => {
       : 0,
     items: req.body.items.map((item) => ({
       productId: Number(item.productId),
+      variantId: item.variantId !== undefined && item.variantId !== null && item.variantId !== ''
+        ? Number(item.variantId)
+        : null,
       quantity: Number(item.quantity),
       discount: item.discount !== undefined
         ? Number(item.discount)
@@ -84,6 +87,9 @@ const returnSale = asyncHandler(async (req, res) => {
     saleId: Number(req.params.saleId),
     items: req.body.items.map((item) => ({
       productId: Number(item.productId),
+      variantId: item.variantId !== undefined && item.variantId !== null && item.variantId !== ''
+        ? Number(item.variantId)
+        : null,
       quantity: Number(item.quantity),
     })),
     reason: req.body.reason,

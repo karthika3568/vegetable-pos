@@ -159,6 +159,40 @@ async function list({ productId, search, status, limit, offset }) {
   };
 }
 
+async function findActiveByProductIds(productIds) {
+  if (!Array.isArray(productIds) || productIds.length === 0) {
+    return [];
+  }
+
+  const placeholders = productIds.map(() => '?').join(',');
+  const [rows] = await pool.query(
+    `SELECT
+       pv.id,
+       pv.product_id,
+       pv.variant_name,
+       pv.selling_price,
+       CASE WHEN pv.is_active = 1 THEN 'active' ELSE 'inactive' END AS status,
+       COALESCE(s.quantity, 0) AS current_stock
+     FROM product_variants pv
+     LEFT JOIN stock s
+       ON s.product_id = pv.product_id
+      AND s.variant_id = pv.id
+     WHERE pv.product_id IN (${placeholders})
+       AND pv.is_active = 1
+     ORDER BY pv.product_id, pv.variant_name ASC`,
+    productIds
+  );
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    productId: Number(row.product_id),
+    variantName: row.variant_name,
+    sellingPrice: Number(row.selling_price),
+    currentStock: Number(row.current_stock),
+    status: row.status,
+  }));
+}
+
 module.exports = {
   findByProductAndId,
   findByProductAndName,
@@ -166,4 +200,5 @@ module.exports = {
   update,
   setStatus,
   list,
+  findActiveByProductIds,
 };

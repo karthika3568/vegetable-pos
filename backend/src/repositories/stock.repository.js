@@ -45,12 +45,12 @@ function to3(value) {
  * transaction so movements + ledger rows commit together).
  */
 
-async function ensureStockRow(conn, productId) {
+async function ensureStockRow(conn, productId, variantId = 0) {
   await conn.query(
-    `INSERT INTO stock (product_id, quantity)
-     VALUES (?, 0)
+    `INSERT INTO stock (product_id, variant_id, quantity)
+     VALUES (?, ?, 0)
      ON DUPLICATE KEY UPDATE id = id`,
-    [productId]
+    [productId, variantId ?? 0]
   );
 }
 
@@ -64,6 +64,7 @@ async function ensureStockRow(conn, productId) {
 async function applyChange({
   conn,
   productId,
+  variantId = 0,
   change,
   transactionType,
   note,
@@ -77,11 +78,12 @@ async function applyChange({
     throw ApiError.badRequest('stock change cannot be zero');
   }
 
-  await ensureStockRow(conn, productId);
+  const resolvedVariantId = Number(variantId ?? 0);
+  await ensureStockRow(conn, productId, resolvedVariantId);
 
   const [[row]] = await conn.query(
-    `SELECT quantity FROM stock WHERE product_id = ? FOR UPDATE`,
-    [productId]
+    `SELECT quantity FROM stock WHERE product_id = ? AND variant_id = ? FOR UPDATE`,
+    [productId, resolvedVariantId]
   );
 
   const before = Number(row.quantity);
@@ -89,24 +91,24 @@ async function applyChange({
 
   if (after < 0) {
     throw ApiError.badRequest(
-      `Stock for product ${productId} cannot go negative (${before} ${delta < 0 ? '-' : '+'} ${Math.abs(delta)} would result in ${after})`
+      `Stock for product ${productId}${variantId ? ` variant ${variantId}` : ''} cannot go negative (${before} ${delta < 0 ? '-' : '+'} ${Math.abs(delta)} would result in ${after})`
     );
   }
 
   await conn.query(
-    `UPDATE stock SET quantity = ? WHERE product_id = ?`,
-    [after, productId]
+    `UPDATE stock SET quantity = ? WHERE product_id = ? AND variant_id = ?`,
+    [after, productId, resolvedVariantId]
   );
 
   await conn.query(
     `INSERT INTO stock_transactions
-       (product_id, transaction_type, quantity_change, quantity_before, quantity_after,
+       (product_id, variant_id, transaction_type, quantity_change, quantity_before, quantity_after,
         reference_table, reference_id, note, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [productId, transactionType, delta, before, after, referenceTable || null, referenceId || null, note || null, createdBy]
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [productId, resolvedVariantId, transactionType, delta, before, after, referenceTable || null, referenceId || null, note || null, createdBy]
   );
 
-  return { productId, before, after, change: delta };
+  return { productId, variantId: resolvedVariantId, before, after, change: delta };
 }
 
 /**
@@ -114,12 +116,16 @@ async function applyChange({
  * reference (e.g. all purchase/cancellation_reversal rows of one
  * purchase for one product).
  */
-async function getNetEffect({ conn, productId, referenceTable, referenceId }) {
+async function getNetEffect({ conn, productId, variantId = 0, referenceTable, referenceId }) {
+  const resolvedVariantId = Number(variantId ?? 0);
   const [[row]] = await conn.query(
     `SELECT COALESCE(SUM(quantity_change), 0) AS net
      FROM stock_transactions
-     WHERE product_id = ? AND reference_table = ? AND reference_id = ?`,
-    [productId, referenceTable, referenceId]
+     WHERE product_id = ?
+       AND variant_id = ?
+       AND reference_table = ?
+       AND reference_id = ?`,
+    [productId, resolvedVariantId, referenceTable, referenceId]
   );
   return Number(row.net);
 }
@@ -148,6 +154,7 @@ async function syncPurchaseStock({
     const net = await getNetEffect({
       conn,
       productId: item.productId,
+      variantId: item.variantId ?? 0,
       referenceTable: 'purchases',
       referenceId: purchaseId,
     });
@@ -162,6 +169,7 @@ async function syncPurchaseStock({
     await applyChange({
       conn,
       productId: item.productId,
+      variantId: item.variantId ?? 0,
       change,
       transactionType: change > 0 ? 'purchase' : 'cancellation_reversal',
       note: change > 0 ? 'Purchase received' : 'Purchase cancelled',

@@ -66,8 +66,11 @@ function toInvoice(row) {
           },
     items: row.items.map((item) => ({
       productId: Number(item.product_id),
+      variantId: item.variant_id ? Number(item.variant_id) : null,
       productCode: item.product_code,
-      productName: item.product_name,
+      productName: item.variant_name && item.variant_name !== item.product_name
+        ? `${item.product_name} (${item.variant_name})`
+        : item.product_name,
       unit: item.unit,
       quantity: toMoney(item.quantity),
       unitPrice: toMoney(item.unit_price),

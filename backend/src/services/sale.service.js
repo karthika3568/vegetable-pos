@@ -60,6 +60,7 @@
 
 const saleRepository = require('../repositories/sale.repository');
 const productRepository = require('../repositories/product.repository');
+const productVariantRepository = require('../repositories/product-variant.repository');
 const customerRepository = require('../repositories/customer.repository');
 const settingRepository = require('../repositories/setting.repository');
 const ApiError = require('../utils/ApiError');
@@ -183,6 +184,7 @@ function resolveProductRates(product, isIntraState, flatRate) {
 async function create({
   customerId,
   saleDate,
+  saleType = 'retail',
   discount = 0,
   items,
   payments = [],
@@ -214,11 +216,17 @@ async function create({
   const merged = new Map();
   for (const raw of items) {
     const productId = Number(raw.productId);
+    const variantId = raw.variantId !== undefined && raw.variantId !== null && raw.variantId !== ''
+      ? Number(raw.variantId)
+      : null;
     const quantity = Number(raw.quantity);
     const itemDiscount = Number(raw.discount ?? 0);
 
     if (!Number.isInteger(productId) || productId < 1) {
       throw ApiError.badRequest('each item productId must be a positive integer');
+    }
+    if (variantId !== null && (!Number.isInteger(variantId) || variantId < 1)) {
+      throw ApiError.badRequest('each item variantId must be a positive integer when provided');
     }
     if (!Number.isFinite(quantity) || quantity <= 0) {
       throw ApiError.badRequest('each item quantity must be a positive number');
@@ -227,14 +235,20 @@ async function create({
       throw ApiError.badRequest('each item discount must be a non-negative number');
     }
 
-    const current = merged.get(productId) || {
+    const key = `${productId}:${variantId ?? 'base'}`;
+    const current = merged.get(key) || {
       productId,
+      variantId,
       quantity: 0,
       discount: 0,
     };
     current.quantity += quantity;
     current.discount += itemDiscount;
-    merged.set(productId, current);
+    merged.set(key, current);
+  }
+
+  if (!['retail', 'wholesale'].includes(saleType)) {
+    throw ApiError.badRequest('saleType must be "retail" or "wholesale"');
   }
 
   const discountAmount = toMoney(discount);
@@ -265,7 +279,32 @@ async function create({
       );
     }
 
-    const unitPrice = Number(product.selling_price);
+    let variant = null;
+    if (entry.variantId !== null) {
+      variant = await productVariantRepository.findByProductAndId(entry.productId, entry.variantId);
+      if (!variant) {
+        throw ApiError.notFound(`Variant ${entry.variantId} not found for product ${entry.productId}`);
+      }
+      if (variant.status !== 'active') {
+        throw ApiError.badRequest(`Variant "${variant.variant_name}" is inactive and cannot be sold`);
+      }
+    } else {
+      const activeVariants = await productVariantRepository.findActiveByProductIds([entry.productId]);
+      if (activeVariants.length > 0) {
+        throw ApiError.badRequest(`Variant selection is required for "${product.name}"`);
+      }
+    }
+
+    const resolvedWholesale = product.wholesale_price != null && product.wholesale_price !== ''
+      ? Number(product.wholesale_price)
+      : null;
+    const baseSellingPrice = Number(variant ? variant.selling_price : product.selling_price);
+
+    if (saleType === 'wholesale' && resolvedWholesale == null) {
+      throw ApiError.badRequest(`Wholesale pricing is not configured for "${product.name}"`);
+    }
+
+    const unitPrice = saleType === 'wholesale' ? Number(resolvedWholesale) : baseSellingPrice;
     const itemDiscountAmount = toMoney(entry.discount);
     const lineTotal = toMoney(quantity * unitPrice - itemDiscountAmount);
 
@@ -285,6 +324,7 @@ async function create({
 
     normalizedItems.push({
       productId: entry.productId,
+      variantId: variant ? Number(variant.id) : null,
       quantity,
       unitPrice,
       discountAmount: itemDiscountAmount,
@@ -442,6 +482,7 @@ async function create({
   return saleRepository.create({
     customerId,
     saleDate: toSqlDateTime(saleDateValue),
+    saleType,
     invoicePrefix,
     subtotal,
     discountAmount,

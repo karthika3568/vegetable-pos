@@ -52,9 +52,15 @@ function Qty({ value }) {
  * falls back to the retail selling price.
  */
 function resolveUnitPrice(product, saleType) {
-  const base = Number(product.sellingPrice);
-  if (saleType === 'wholesale' && product.wholesalePrice != null && Number(product.wholesalePrice) >= 0) {
-    return round2(Number(product.wholesalePrice));
+  const base = Number(product?.sellingPrice ?? 0);
+  if (saleType === 'wholesale') {
+    const wholesale = product?.wholesalePrice;
+    if (wholesale == null || wholesale === '' || !Number.isFinite(Number(wholesale))) {
+      return null;
+    }
+    const numeric = Number(wholesale);
+    if (numeric < 0) return null;
+    return round2(numeric);
   }
   return round2(base);
 }
@@ -166,13 +172,35 @@ function StockBadge({ available }) {
   return <span className="badge badge-active">{t('pos.inStock')}</span>;
 }
 
+function getCartLineKey(productId, variantId = null) {
+  return `${Number(productId)}:${variantId != null ? Number(variantId) : 'base'}`;
+}
+
 function ProductCard({ product, saleType, selected, onSelect, onAdd }) {
   const { t } = useLanguage();
-  const available = product.currentStock;
+  const variants = Array.isArray(product.variants) ? product.variants : [];
+  const initialVariantId = variants.length > 0 ? Number(variants[0].id) : null;
+  const [selectedVariantId, setSelectedVariantId] = useState(initialVariantId);
+  const selectedVariant = variants.find((variant) => Number(variant.id) === Number(selectedVariantId)) || null;
+  const available = selectedVariant ? Number(selectedVariant.currentStock) : Number(product.currentStock);
   const disabled = available <= 0;
-  const price = resolveUnitPrice(product, saleType);
+  const price = saleType === 'wholesale'
+    ? resolveUnitPrice(product, saleType)
+    : (selectedVariant
+      ? Number(selectedVariant.sellingPrice ?? product.sellingPrice)
+      : resolveUnitPrice(product, saleType));
   const decimalUnit = ['kg', 'g', 'litre', 'liter'].includes(String(product.unit || '').trim().toLowerCase());
   const [quantity, setQuantity] = useState(decimalUnit ? 1 : 1);
+
+  useEffect(() => {
+    if (variants.length === 0) {
+      setSelectedVariantId(null);
+      return;
+    }
+    if (!variants.some((variant) => Number(variant.id) === Number(selectedVariantId))) {
+      setSelectedVariantId(Number(variants[0].id));
+    }
+  }, [variants, selectedVariantId]);
 
   const step = decimalUnit ? 0.5 : 1;
 
@@ -224,6 +252,25 @@ function ProductCard({ product, saleType, selected, onSelect, onAdd }) {
           {product.unit ? <span className="pos-product-unit">{product.unit}</span> : null}
           <span className="pos-product-price"><Money value={price} /></span>
         </div>
+
+        {variants.length > 0 ? (
+          <div className="pos-product-variant-picker" onClick={(event) => event.stopPropagation()}>
+            {variants.map((variant) => (
+              <button
+                key={variant.id}
+                type="button"
+                className={`pos-product-variant${Number(selectedVariantId) === Number(variant.id) ? ' is-selected' : ''}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setSelectedVariantId(Number(variant.id));
+                }}
+                title={variant.variantName}
+              >
+                {variant.variantName}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         <div className="pos-product-meta-row pos-product-meta-row-secondary">
           {saleType === 'wholesale' && product.wholesalePrice != null && Number(product.wholesalePrice) >= 0 ? (
@@ -277,10 +324,11 @@ function ProductCard({ product, saleType, selected, onSelect, onAdd }) {
           <button
             type="button"
             className="btn btn-primary btn-sm pos-product-add"
-            disabled={disabled}
+            disabled={disabled || (saleType === 'wholesale' && price == null)}
             onClick={(event) => {
               event.stopPropagation();
-              onAdd(product, normalizeQuantity(quantity));
+              if (saleType === 'wholesale' && price == null) return;
+              onAdd(product, normalizeQuantity(quantity), selectedVariantId);
             }}
           >
             {t('pos.add')}
@@ -302,13 +350,14 @@ function CartLine({ line, onChange, onIncrement, onDecrement, onRemove }) {
           <span className="cell-main">{line.name}</span>
           <span className="cell-sub">
             {line.productCode}
+            {line.variantName ? ` · ${line.variantName}` : ''}
             {line.unit ? ` · ${line.unit}` : ''}
           </span>
         </div>
         <button
           type="button"
           className="icon-btn pos-cart-remove"
-          onClick={() => onRemove(line.productId)}
+          onClick={() => onRemove(line.key)}
           aria-label={t('pos.removeFromCart')}
           title={t('pos.removeFromCart')}
         >
@@ -321,7 +370,7 @@ function CartLine({ line, onChange, onIncrement, onDecrement, onRemove }) {
           <button
             type="button"
             className="btn btn-outline btn-sm"
-            onClick={() => onDecrement(line.productId)}
+            onClick={() => onDecrement(line.key)}
             disabled={Number(line.quantity) <= round3(0.001)}
             aria-label={`−`}
           >
@@ -333,13 +382,13 @@ function CartLine({ line, onChange, onIncrement, onDecrement, onRemove }) {
             step="0.001"
             inputMode="decimal"
             value={line.quantity}
-            onChange={(event) => onChange(line.productId, event.target.value)}
+            onChange={(event) => onChange(line.key, event.target.value)}
             aria-label={`Quantity of ${line.name}`}
           />
           <button
             type="button"
             className="btn btn-outline btn-sm"
-            onClick={() => onIncrement(line.productId)}
+            onClick={() => onIncrement(line.key)}
             disabled={Number(line.quantity) >= line.available}
             aria-label={`+`}
           >
@@ -900,6 +949,13 @@ export default function POSPage() {
 
   function handleToggleSaleType(nextType) {
     if (saleType === nextType) return;
+    if (nextType === 'wholesale') {
+      const blocked = cart.some((line) => resolveUnitPrice(line.product, 'wholesale') == null);
+      if (blocked) {
+        showToast('Wholesale price is not configured for one or more items.', 'warning');
+        return;
+      }
+    }
     setSaleType(nextType);
     setCart((prev) => repriceLines(prev, nextType));
   }
@@ -996,12 +1052,19 @@ export default function POSPage() {
     searchRef.current?.focus();
   }
 
-  const addLine = useCallback((product, quantity = 1) => {
+  const addLine = useCallback((product, quantity = 1, variantId = null) => {
+    const normalizedVariantId = variantId != null && variantId !== '' ? Number(variantId) : null;
+    const variant = Array.isArray(product.variants)
+      ? product.variants.find((item) => Number(item.id) === Number(normalizedVariantId)) || null
+      : null;
+    const key = getCartLineKey(product.id, normalizedVariantId);
+    const available = variant ? Number(variant.currentStock) : Number(product.currentStock);
+
     setCart((prev) => {
-      const existing = prev.find((line) => line.productId === product.id);
+      const existing = prev.find((line) => line.key === key);
       if (existing) {
         return prev.map((line) =>
-          line.productId === product.id
+          line.key === key
             ? {
                 ...line,
                 quantity: round3(Math.min(Number(line.quantity) + quantity, line.available)),
@@ -1012,13 +1075,19 @@ export default function POSPage() {
       return [
         ...prev,
         {
+          key,
           productId: product.id,
+          variantId: normalizedVariantId,
           productCode: product.productCode,
-          name: product.name,
+          name: variant ? `${product.name} (${variant.variantName})` : product.name,
+          variantName: variant ? variant.variantName : null,
           unit: product.unit,
-          unitPrice: resolveUnitPrice({ ...product, sellingPrice: product.sellingPrice }, saleType),
+          unitPrice: resolveUnitPrice({
+            ...product,
+            sellingPrice: variant ? Number(variant.sellingPrice) : Number(product.sellingPrice),
+          }, saleType),
           quantity: round3(quantity),
-          available: product.currentStock,
+          available,
           priceIncludesTax: product.priceIncludesTax,
           product,
         },
@@ -1026,39 +1095,49 @@ export default function POSPage() {
     });
   }, [saleType]);
 
-  function handleAddToCart(product, quantity = 1) {
-    if (Number(product.currentStock) <= 0) return;
+  function handleAddToCart(product, quantity = 1, variantId = null) {
+    const variants = Array.isArray(product.variants) ? product.variants : [];
+    const selectedVariantId = variants.length > 0
+      ? (variantId != null && variantId !== '' ? Number(variantId) : Number(variants[0].id))
+      : null;
+    const variant = variants.find((item) => Number(item.id) === Number(selectedVariantId)) || null;
+    const available = variant ? Number(variant.currentStock) : Number(product.currentStock);
+    if (available <= 0) return;
     if (!Number.isFinite(Number(quantity)) || Number(quantity) <= 0) return;
-    addLine(product, Number(quantity));
-    showToast(`${product.name} added to cart.`, 'success');
+    if (saleType === 'wholesale' && resolveUnitPrice({ ...product, sellingPrice: variant ? Number(variant.sellingPrice) : Number(product.sellingPrice) }, 'wholesale') == null) {
+      showToast(`Wholesale price is not configured for "${product.name}".`, 'warning');
+      return;
+    }
+    addLine(product, Number(quantity), selectedVariantId);
+    showToast(`${product.name}${variant ? ` (${variant.variantName})` : ''} added to cart.`, 'success');
     playPosSound('product', soundEnabled && settings.sound_product !== 'off');
     searchRef.current?.focus();
   }
 
-  function handleQuantityChange(productId, rawValue) {
+  function handleQuantityChange(lineKey, rawValue) {
     if (rawValue === '') return;
     const value = Number(rawValue);
     if (!Number.isFinite(value) || value <= 0) return;
     setCart((prev) =>
-      prev.map((line) => (line.productId === productId ? { ...line, quantity: round3(value) } : line))
+      prev.map((line) => (line.key === lineKey ? { ...line, quantity: round3(value) } : line))
     );
   }
 
-  function handleIncrement(productId) {
+  function handleIncrement(lineKey) {
     setCart((prev) =>
       prev.map((line) =>
-        line.productId === productId && Number(line.quantity) < line.available
+        line.key === lineKey && Number(line.quantity) < line.available
           ? { ...line, quantity: round3(Number(line.quantity) + 1) }
           : line
       )
     );
   }
 
-  function handleDecrement(productId) {
+  function handleDecrement(lineKey) {
     setCart((prev) =>
       prev
         .map((line) =>
-          line.productId === productId
+          line.key === lineKey
             ? { ...line, quantity: round3(Number(line.quantity) - 1) }
             : line
         )
@@ -1066,8 +1145,8 @@ export default function POSPage() {
     );
   }
 
-  function handleRemove(productId) {
-    setCart((prev) => prev.filter((line) => line.productId !== productId));
+  function handleRemove(lineKey) {
+    setCart((prev) => prev.filter((line) => line.key !== lineKey));
   }
 
   function handleCustomerInputChange(event) {
@@ -1199,6 +1278,7 @@ export default function POSPage() {
       ...(discountValue > 0 ? { discount: discountValue } : {}),
       items: cart.map((line) => ({
         productId: line.productId,
+        variantId: line.variantId ?? null,
         quantity: Number(line.quantity),
       })),
       ...(paymentRows.length
@@ -1617,7 +1697,7 @@ export default function POSPage() {
                 <div className="pos-cart">
                   {cart.map((line) => (
                     <CartLine
-                      key={line.productId}
+                      key={line.key}
                       line={line}
                       onChange={handleQuantityChange}
                       onIncrement={handleIncrement}

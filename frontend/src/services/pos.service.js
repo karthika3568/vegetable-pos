@@ -11,6 +11,8 @@
 import { api } from '../api/client.js';
 
 function mapProduct(raw) {
+  const variants = Array.isArray(raw.variants) ? raw.variants : [];
+
   return {
     id: Number(raw.id),
     productCode: raw.sku || raw.product_code,
@@ -33,6 +35,14 @@ function mapProduct(raw) {
     currentStock: Number(raw.current_stock),
     minimumStock: Number(raw.minimum_stock),
     status: raw.status || raw.is_active,
+    variants: variants.map((variant) => ({
+      id: Number(variant.id),
+      productId: Number(variant.product_id ?? raw.id),
+      variantName: variant.variant_name || variant.name || null,
+      sellingPrice: Number(variant.selling_price ?? variant.sellingPrice ?? 0),
+      currentStock: Number(variant.current_stock ?? variant.currentStock ?? 0),
+      status: variant.status || 'active',
+    })),
   };
 }
 

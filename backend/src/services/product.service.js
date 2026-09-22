@@ -35,13 +35,17 @@ async function validateCategory(categoryId) {
   return category;
 }
 
-function validatePrices(purchasePrice, sellingPrice, mrp) {
+function validatePrices(purchasePrice, sellingPrice, wholesalePrice, mrp) {
   if (Number(purchasePrice) < 0) {
     throw ApiError.badRequest('purchasePrice cannot be negative');
   }
 
   if (Number(sellingPrice) < 0) {
     throw ApiError.badRequest('sellingPrice cannot be negative');
+  }
+
+  if (wholesalePrice !== undefined && wholesalePrice !== null && Number(wholesalePrice) < 0) {
+    throw ApiError.badRequest('wholesalePrice cannot be negative');
   }
 
   if (mrp !== undefined && mrp !== null && Number(mrp) < 0) {
@@ -179,6 +183,7 @@ async function create({
   unit,
   purchasePrice,
   sellingPrice,
+  wholesalePrice,
   hsnCode,
   taxCodeId,
   mrp,
@@ -189,7 +194,7 @@ async function create({
   await validateCategory(categoryId);
 
   validateUnit(unit);
-  validatePrices(purchasePrice, sellingPrice, mrp);
+  validatePrices(purchasePrice, sellingPrice, wholesalePrice, mrp);
   validateStock(currentStock, minimumStock);
   await validateTaxCode(taxCodeId);
 
@@ -205,6 +210,7 @@ async function create({
     unit,
     purchasePrice,
     sellingPrice,
+    wholesalePrice: wholesalePrice == null || wholesalePrice === '' ? null : Number(wholesalePrice),
     hsnCode,
     taxCodeId: taxCodeId || null,
     mrp,
@@ -222,6 +228,7 @@ async function update(
     unit,
     purchasePrice,
     sellingPrice,
+    wholesalePrice,
     hsnCode,
     taxCodeId,
     mrp,
@@ -235,7 +242,7 @@ async function update(
   await validateCategory(categoryId);
 
   validateUnit(unit);
-  validatePrices(purchasePrice, sellingPrice, mrp);
+  validatePrices(purchasePrice, sellingPrice, wholesalePrice, mrp);
   validateStock(currentStock, minimumStock);
   await validateTaxCode(taxCodeId);
 
@@ -251,6 +258,7 @@ async function update(
     unit,
     purchasePrice,
     sellingPrice,
+    wholesalePrice: wholesalePrice == null || wholesalePrice === '' ? null : Number(wholesalePrice),
     hsnCode,
     taxCodeId: taxCodeId || null,
     mrp,

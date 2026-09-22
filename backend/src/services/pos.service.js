@@ -9,6 +9,7 @@
  */
 
 const productRepository = require('../repositories/product.repository');
+const productVariantRepository = require('../repositories/product-variant.repository');
 const customerRepository = require('../repositories/customer.repository');
 const settingRepository = require('../repositories/setting.repository');
 const taxCodeRepository = require('../repositories/tax-code.repository');
@@ -25,7 +26,32 @@ async function products({ search, categoryId }) {
     offset: 0,
   });
 
-  return rows;
+  if (!rows.length) {
+    return [];
+  }
+
+  const productIds = rows.map((row) => Number(row.id));
+  const variants = await productVariantRepository.findActiveByProductIds(productIds);
+  const variantMap = new Map();
+
+  for (const variant of variants) {
+    if (!variantMap.has(variant.productId)) {
+      variantMap.set(variant.productId, []);
+    }
+    variantMap.get(variant.productId).push({
+      id: variant.id,
+      product_id: variant.productId,
+      variant_name: variant.variantName,
+      selling_price: variant.sellingPrice,
+      current_stock: variant.currentStock,
+      status: variant.status,
+    });
+  }
+
+  return rows.map((product) => ({
+    ...product,
+    variants: variantMap.get(Number(product.id)) || [],
+  }));
 }
 
 async function customers({ search }) {

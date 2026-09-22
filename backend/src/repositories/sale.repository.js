@@ -86,6 +86,7 @@ const BASE_SELECT = `
     s.paid_amount,
     s.balance_due,
     s.payment_type,
+    s.sale_type,
     s.status,
     s.created_by,
     u.username AS created_by_name,
@@ -189,8 +190,10 @@ async function findById(id) {
     `SELECT
        si.id,
        si.product_id,
+       si.variant_id,
        p.sku AS product_code,
        p.name AS product_name,
+       COALESCE(pv.variant_name, p.name) AS variant_name,
        p.unit,
        si.quantity,
        si.unit_price,
@@ -205,6 +208,7 @@ async function findById(id) {
        si.igst_amount
      FROM sale_items si
      JOIN products p ON p.id = si.product_id
+     LEFT JOIN product_variants pv ON pv.id = si.variant_id
      WHERE si.sale_id = ?
      ORDER BY si.id ASC`,
     [id]
@@ -295,6 +299,7 @@ async function findById(id) {
 async function create({
   customerId,
   saleDate,
+  saleType,
   invoicePrefix,
   subtotal,
   discountAmount,
@@ -374,8 +379,8 @@ const [saleResult] = await connection.query(
       `INSERT INTO sales
          (customer_id, invoice_number, sale_date, subtotal, discount_amount,
           tax_amount, cgst_amount, sgst_amount, igst_amount,
-          total_amount, paid_amount, payment_type, status, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?)`,
+          total_amount, paid_amount, payment_type, sale_type, status, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?)`,
       [
         customerId || null,
         `TMP-${randomUUID()}`,
@@ -389,6 +394,7 @@ const [saleResult] = await connection.query(
         total,
         paidAmount,
         paymentType,
+        saleType || 'retail',
         createdBy,
       ]
     );
@@ -434,15 +440,17 @@ const [saleResult] = await connection.query(
     );
 
     for (const item of items) {
+      const variantId = item.variantId ?? 0;
       await connection.query(
         `INSERT INTO sale_items
-           (sale_id, product_id, quantity, unit_price, discount_amount,
+           (sale_id, product_id, variant_id, quantity, unit_price, discount_amount,
             tax_code, cgst_rate, sgst_rate, igst_rate,
             cgst_amount, sgst_amount, igst_amount)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           saleId,
           item.productId,
+          variantId,
           item.quantity,
           item.unitPrice,
           item.discountAmount,
@@ -485,6 +493,7 @@ const [saleResult] = await connection.query(
       await stockRepository.applyChange({
         conn: connection,
         productId: item.productId,
+        variantId: item.variantId ?? 0,
         change: -item.quantity,
         transactionType: 'sale',
         note: 'Sale completed',

@@ -22,6 +22,7 @@ const BASE_SELECT = `
     p.unit,
     p.cost_price AS purchase_price,
     p.selling_price,
+    p.wholesale_price,
     p.image_path,
     p.hsn_code,
     p.tax_code_id,
@@ -54,6 +55,7 @@ async function create({
   unit,
   purchasePrice,
   sellingPrice,
+  wholesalePrice,
   hsnCode,
   taxCodeId,
   mrp,
@@ -68,9 +70,9 @@ async function create({
 
     const [result] = await connection.query(
       `INSERT INTO products
-        (category_id, sku, barcode, name, unit, cost_price, selling_price,
+        (category_id, sku, barcode, name, unit, cost_price, selling_price, wholesale_price,
          hsn_code, tax_code_id, mrp, price_includes_tax, reorder_level, is_active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
       [
         categoryId,
         productCode,
@@ -79,6 +81,7 @@ async function create({
         unit,
         purchasePrice,
         sellingPrice,
+        wholesalePrice ?? null,
         hsnCode || null,
         taxCodeId || null,
         mrp || null,
@@ -192,6 +195,7 @@ async function update(
     unit,
     purchasePrice,
     sellingPrice,
+    wholesalePrice,
     hsnCode,
     taxCodeId,
     mrp,
@@ -217,6 +221,7 @@ async function update(
            unit = ?,
            cost_price = ?,
            selling_price = ?,
+           wholesale_price = ?,
            hsn_code = ?,
            tax_code_id = ?,
            mrp = ?,
@@ -229,6 +234,7 @@ async function update(
         unit,
         purchasePrice,
         sellingPrice,
+        wholesalePrice ?? null,
         hsnCode || null,
         taxCodeId || null,
         mrp || null,

@@ -257,6 +257,7 @@ CREATE TABLE products (
     unit                ENUM('kg','g','piece','dozen','bunch','litre') NOT NULL DEFAULT 'kg',
     cost_price          DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     selling_price       DECIMAL(10,2) NOT NULL,
+    wholesale_price     DECIMAL(10,2) NULL,
     mrp                 DECIMAL(10,2) NULL,
     price_includes_tax  TINYINT(1)   NOT NULL DEFAULT 0,
     image_path          VARCHAR(255) NULL,
@@ -423,6 +424,7 @@ CREATE TABLE purchase_items (
     id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     purchase_id     INT UNSIGNED NOT NULL,
     product_id      INT UNSIGNED NOT NULL,
+    variant_id      INT UNSIGNED NOT NULL DEFAULT 0,
     quantity        DECIMAL(10,3) NOT NULL,
     unit_cost       DECIMAL(10,2) NOT NULL,
     line_total      DECIMAL(12,2) GENERATED ALWAYS AS (quantity * unit_cost) STORED,
@@ -437,6 +439,7 @@ CREATE TABLE purchase_items (
 
 CREATE INDEX idx_purchase_items_purchase ON purchase_items(purchase_id);
 CREATE INDEX idx_purchase_items_product ON purchase_items(product_id);
+CREATE INDEX idx_purchase_items_variant ON purchase_items(variant_id);
 
 -- =====================================================================
 -- 11. STOCK
@@ -448,13 +451,16 @@ CREATE INDEX idx_purchase_items_product ON purchase_items(product_id);
 CREATE TABLE stock (
     id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     product_id      INT UNSIGNED NOT NULL,
+    variant_id      INT UNSIGNED NOT NULL DEFAULT 0,
     quantity        DECIMAL(10,3) NOT NULL DEFAULT 0.000,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    CONSTRAINT uq_stock_product UNIQUE (product_id),
+    CONSTRAINT uq_stock_product_variant UNIQUE (product_id, variant_id),
     CONSTRAINT fk_stock_product FOREIGN KEY (product_id) REFERENCES products(id)
         ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT chk_stock_quantity CHECK (quantity >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_stock_variant ON stock(variant_id);
 
 -- =====================================================================
 -- 12. STOCK_TRANSACTIONS
@@ -466,6 +472,7 @@ CREATE TABLE stock (
 CREATE TABLE stock_transactions (
     id                  BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     product_id          INT UNSIGNED NOT NULL,
+    variant_id          INT UNSIGNED NOT NULL DEFAULT 0,
     transaction_type    ENUM('purchase','sale','return_purchase','return_sale','adjustment','cancellation_reversal','damage') NOT NULL,
     quantity_change     DECIMAL(10,3) NOT NULL, -- signed: positive = stock in, negative = stock out
     quantity_before     DECIMAL(10,3) NOT NULL,
@@ -483,6 +490,7 @@ CREATE TABLE stock_transactions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_stock_tx_product ON stock_transactions(product_id);
+CREATE INDEX idx_stock_tx_variant ON stock_transactions(variant_id);
 CREATE INDEX idx_stock_tx_reference ON stock_transactions(reference_table, reference_id);
 CREATE INDEX idx_stock_tx_created_at ON stock_transactions(created_at);
 
@@ -532,6 +540,7 @@ CREATE TABLE sales (
     paid_amount     DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     balance_due     DECIMAL(12,2) GENERATED ALWAYS AS (total_amount - paid_amount) STORED,
     payment_type    ENUM('cash','credit','partial') NOT NULL DEFAULT 'cash',
+    sale_type       ENUM('retail','wholesale') NOT NULL DEFAULT 'retail',
     status          ENUM('completed','cancelled','returned') NOT NULL DEFAULT 'completed',
     created_by      INT UNSIGNED NOT NULL, -- cashier
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -612,6 +621,7 @@ CREATE TABLE sale_items (
     id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     sale_id         INT UNSIGNED NOT NULL,
     product_id      INT UNSIGNED NOT NULL,
+    variant_id      INT UNSIGNED NOT NULL DEFAULT 0,
     quantity        DECIMAL(10,3) NOT NULL,
     unit_price      DECIMAL(10,2) NOT NULL,
     discount_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
@@ -634,6 +644,7 @@ CREATE TABLE sale_items (
 
 CREATE INDEX idx_sale_items_sale ON sale_items(sale_id);
 CREATE INDEX idx_sale_items_product ON sale_items(product_id);
+CREATE INDEX idx_sale_items_variant ON sale_items(variant_id);
 
 -- =====================================================================
 -- 15. PAYMENTS

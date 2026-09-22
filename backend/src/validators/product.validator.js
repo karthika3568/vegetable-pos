@@ -46,6 +46,11 @@ const create = [
     .isFloat({ min: 0 })
     .withMessage('sellingPrice must be a non-negative number'),
 
+  body('wholesalePrice')
+    .optional({ nullable: true })
+    .isFloat({ min: 0 })
+    .withMessage('wholesalePrice must be a non-negative number'),
+
   body('hsnCode')
     .optional({ nullable: true })
     .trim()
@@ -105,6 +110,11 @@ const update = [
   body('sellingPrice')
     .isFloat({ min: 0 })
     .withMessage('sellingPrice must be a non-negative number'),
+
+  body('wholesalePrice')
+    .optional({ nullable: true })
+    .isFloat({ min: 0 })
+    .withMessage('wholesalePrice must be a non-negative number'),
 
   body('hsnCode')
     .optional({ nullable: true })

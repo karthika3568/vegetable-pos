@@ -48,6 +48,10 @@ const create = asyncHandler(async (req, res) => {
     unit: req.body.unit,
     purchasePrice: Number(req.body.purchasePrice),
     sellingPrice: Number(req.body.sellingPrice),
+    wholesalePrice:
+      req.body.wholesalePrice !== undefined && req.body.wholesalePrice !== null && req.body.wholesalePrice !== ''
+        ? Number(req.body.wholesalePrice)
+        : null,
     hsnCode: req.body.hsnCode,
     taxCodeId:
       req.body.taxCodeId !== undefined && req.body.taxCodeId !== null
@@ -84,6 +88,10 @@ const update = asyncHandler(async (req, res) => {
       unit: req.body.unit,
       purchasePrice: Number(req.body.purchasePrice),
       sellingPrice: Number(req.body.sellingPrice),
+      wholesalePrice:
+        req.body.wholesalePrice !== undefined && req.body.wholesalePrice !== null && req.body.wholesalePrice !== ''
+          ? Number(req.body.wholesalePrice)
+          : null,
       hsnCode: req.body.hsnCode,
       taxCodeId:
         req.body.taxCodeId !== undefined && req.body.taxCodeId !== null
